@@ -30,10 +30,10 @@ make migrate-down      # rollback satu langkah
 make migrate-create name=add_something
 ```
 
-Override target dengan `GOOSE_DBSTRING`, mis. saat memakai docker-compose:
+Override target dengan `GOOSE_DBSTRING` bila Postgres Anda bukan di host default:
 
 ```bash
-GOOSE_DBSTRING="postgres://ditalk:ditalk@localhost:5432/db_ditalk?sslmode=disable" make migrate-up
+GOOSE_DBSTRING="postgres://user:pass@localhost:5432/db_ditalk?sslmode=disable" make migrate-up
 ```
 
 | Migrasi | Isi |
@@ -52,14 +52,18 @@ presisi hanya boleh terisi bila `precise_opt_in` true (bab 16A.1).
 
 ## Menjalankan
 
-```bash
-docker compose up -d                      # postgres+pgvector, redis, minio
+Jalan langsung di host, tanpa container. Yang dibutuhkan hanya PostgreSQL yang
+sudah aktif.
 
+```bash
 cd backend && make migrate-up && go run ./cmd/api   # :8080
-cd frontend && npm run dev                # :5173
+cd frontend && npm run dev                          # :5173
 cd services/wa-connector && npm run dev
 cd services/ai-media && uvicorn app.main:app --reload --port 8000
 ```
+
+Redis (queue) dan object storage baru dibutuhkan saat pipeline media masuk di
+Phase 2-3, belum dipakai sekarang.
 
 ## Batasan
 
