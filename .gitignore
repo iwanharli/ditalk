@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build output
+dist/
+build/
+backend/api
+backend/bin/
+
+# WhatsApp auth state — NEVER commit
+.auth/
+services/wa-connector/.auth/
+*.session
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Local data
+data/
+media/
+*.db
+*.sqlite
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
