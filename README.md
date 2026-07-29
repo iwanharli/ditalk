@@ -16,6 +16,27 @@ local-first, evidence-first. Rancangan lengkap ada di
 Baileys hanya tersedia sebagai library Node.js, dan prosodi/OCR paling matang di
 Python — karena itu keduanya berdiri sebagai service terpisah di belakang Go.
 
+## Library yang dipakai
+
+**Backend (Go)** — `pgx/v5` (PostgreSQL), `goose/v3` (migrasi, embedded ke
+binary), `asynq` + Redis (job queue), `openai-go/v3` (AI), `golang-jwt/v5` +
+`argon2id` (auth), `validator/v10`, `rs/cors`, `godotenv`. Routing HTTP memakai
+`net/http.ServeMux` bawaan Go 1.22+, tanpa framework tambahan.
+
+**Frontend (React 19)** — Tailwind v4 + shadcn/ui (Radix, preset Nova) dengan 25
+komponen di `src/components/ui/`, `react-router-dom`, `@tanstack/react-query`,
+`recharts` (chart), `zod` (validasi kontrak), `lucide-react`, `date-fns`,
+`next-themes`, `sonner`.
+
+Komponen shadcn adalah **kode di repo ini**, bukan dependency — bebas diedit.
+
+**Prasyarat**: PostgreSQL + pgvector, Redis, Node 20+, Go 1.24+, Python 3.11+.
+Semua jalan native di host, tanpa container.
+
+```bash
+cp .env.example .env    # lalu isi OPENAI_API_KEY, ENCRYPTION_KEY, JWT_SECRET
+```
+
 ## Database
 
 Nama database: **`db_ditalk`** (PostgreSQL + pgvector). Migrasi memakai
@@ -52,18 +73,20 @@ presisi hanya boleh terisi bila `precise_opt_in` true (bab 16A.1).
 
 ## Menjalankan
 
-Jalan langsung di host, tanpa container. Yang dibutuhkan hanya PostgreSQL yang
-sudah aktif.
+Pastikan PostgreSQL dan Redis aktif, lalu tiap baris di terminal terpisah:
 
 ```bash
-cd backend && make migrate-up && go run ./cmd/api   # :8080
-cd frontend && npm run dev                          # :5173
+cd backend && go run ./cmd/api      # :8080  API (migrasi jalan otomatis)
+cd backend && go run ./cmd/worker   #        worker queue
+cd frontend && npm run dev          # :5173  dashboard
 cd services/wa-connector && npm run dev
 cd services/ai-media && uvicorn app.main:app --reload --port 8000
 ```
 
-Redis (queue) dan object storage baru dibutuhkan saat pipeline media masuk di
-Phase 2-3, belum dipakai sekarang.
+Frontend memproksi `/api/*` ke backend, jadi browser tetap satu origin dan
+cookie berperilaku wajar saat development.
+
+Object storage (media asli) baru dibutuhkan di Phase 2-3.
 
 ## Batasan
 

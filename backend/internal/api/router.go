@@ -3,14 +3,40 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/go-playground/validator/v10"
+	"github.com/rs/cors"
+
+	"ditalk/backend/internal/ai"
+	"ditalk/backend/internal/config"
+	"ditalk/backend/internal/queue"
+	"ditalk/backend/internal/storage"
 )
 
-// NewRouter wires up the top-level HTTP routes for the ditalk backend.
-// Endpoints follow the contract in docs/.../22 DESAIN API DAN EVENT INTERNAL.
-func NewRouter() http.Handler {
+type Server struct {
+	cfg      config.Config
+	db       *storage.DB
+	queue    *queue.Client
+	ai       *ai.Client
+	validate *validator.Validate
+}
+
+func NewServer(cfg config.Config, db *storage.DB, q *queue.Client, aiClient *ai.Client) *Server {
+	return &Server{
+		cfg:      cfg,
+		db:       db,
+		queue:    q,
+		ai:       aiClient,
+		validate: validator.New(validator.WithRequiredStructEnabled()),
+	}
+}
+
+// Routes follow the API contract in doc bab 22.1. Handlers not yet implemented
+// return 501 so the contract is visible before the logic exists.
+func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /health", handleHealth)
+	mux.HandleFunc("GET /health", s.handleHealth)
 
 	mux.HandleFunc("POST /auth/login", notImplemented)
 	mux.HandleFunc("POST /wa/pair", notImplemented)
@@ -37,16 +63,34 @@ func NewRouter() http.Handler {
 	mux.HandleFunc("PATCH /commitments/{id}", notImplemented)
 	mux.HandleFunc("POST /exports", notImplemented)
 
-	return mux
+	// Internal ingestion endpoint used by the Node/Baileys connector.
+	mux.HandleFunc("POST /internal/events", notImplemented)
+
+	c := cors.New(cors.Options{
+		AllowedOrigins:   s.cfg.AllowOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type"},
+		AllowCredentials: true,
+	})
+
+	return c.Handler(mux)
 }
 
-func handleHealth(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	status := map[string]string{"status": "ok", "database": "ok"}
+	if err := s.db.Pool.Ping(r.Context()); err != nil {
+		status["status"] = "degraded"
+		status["database"] = "unreachable"
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func writeJSON(w http.ResponseWriter, code int, body any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 func notImplemented(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	json.NewEncoder(w).Encode(map[string]string{"error": "not_implemented"})
+	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "not_implemented"})
 }
