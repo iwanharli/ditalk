@@ -11,7 +11,7 @@ type Config struct {
 func Load() Config {
 	return Config{
 		Port:        getEnv("PORT", "8080"),
-		DatabaseURL: getEnv("DATABASE_URL", "postgres://ditalk:ditalk@localhost:5432/ditalk?sslmode=disable"),
+		DatabaseURL: getEnv("DATABASE_URL", "postgres://localhost:5432/db_ditalk?sslmode=disable"),
 		Environment: getEnv("ENV", "development"),
 	}
 }
