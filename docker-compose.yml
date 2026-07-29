@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_USER: ditalk
       POSTGRES_PASSWORD: ditalk
-      POSTGRES_DB: ditalk
+      POSTGRES_DB: db_ditalk
     ports:
       - "5432:5432"
     volumes:
