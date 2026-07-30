@@ -93,8 +93,10 @@ export class ContactDirectory {
    * Only the JID, timestamp, and pushName are read. Message content is never
    * touched here, and the allowlist still decides what gets analyzed.
    */
-  noteMessageActivity(msg) {
-    const phone = phoneFromJid(msg?.key?.remoteJid);
+  noteMessageActivity(msg, resolvedPhone = null) {
+    // resolvedPhone comes from the LID map when WhatsApp addressed the chat by
+    // LID; without it those conversations never appear in the picker at all.
+    const phone = phoneFromJid(msg?.key?.remoteJid) ?? resolvedPhone;
     if (!phone) return;
 
     const ts = Number(msg.messageTimestamp ?? 0);
@@ -103,7 +105,9 @@ export class ContactDirectory {
     const name = msg.key?.fromMe ? '' : msg.pushName?.trim() || '';
 
     this.noteChat({
-      id: msg.key.remoteJid,
+      // Always the phone JID, so a LID-addressed chat and the same person's
+      // phone-addressed chat do not become two separate candidates.
+      id: `${phone}@s.whatsapp.net`,
       name,
       conversationTimestamp: Number.isFinite(ts) && ts > 0 ? ts : 0,
     });

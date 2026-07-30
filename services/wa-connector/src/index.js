@@ -13,6 +13,7 @@ import { Allowlist } from './allowlist.js';
 import { readOwnProfile } from './profile.js';
 import { ContactDirectory } from './contacts.js';
 import { AvatarFetcher } from './avatars.js';
+import { LidMap } from './lidmap.js';
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
@@ -26,6 +27,8 @@ const DIRECTORY_FILE = join(dirname(AUTH_DIR), '.wa-chats.json');
 
 const allowlist = new Allowlist();
 const directory = new ContactDirectory();
+const lidMap = new LidMap();
+let lastLidMapSize = 0;
 let sock = null;
 // The socket object exists before it finishes authenticating, so anything that
 // queries WhatsApp must wait for 'open' rather than merely for sock to be set.
@@ -33,6 +36,8 @@ let socketOpen = false;
 const avatars = new AvatarFetcher(() => (socketOpen ? sock : null));
 let stopping = false;
 let rejectedSinceLastLog = 0;
+/** Drop counts per reason, reported with the periodic summary. */
+const dropReasons = new Map();
 
 // A session that WhatsApp refuses is rejected the same way every time, so
 // retrying forever produces a silent loop with no QR and no explanation. After
@@ -53,11 +58,33 @@ function forwardIfAllowed(event, jid, buildPayload) {
   const { allowed, reason } = allowlist.check(jid);
   if (!allowed) {
     rejectedSinceLastLog++;
-    // Log the reason only, never the JID or content.
+    // Counts per reason, so a chat that never matches can be explained. A chat
+    // addressed by @lid lands in unsupported_jid and is invisible to the
+    // allowlist, which looks identical to "no such conversation" without this.
+    // The JID domain alone distinguishes a status broadcast from a LID chat we
+    // failed to map. It is not personal data; the local part is never recorded.
+    const at = typeof jid === 'string' ? jid.lastIndexOf('@') : -1;
+    const domain = at >= 0 ? jid.slice(at) : 'tanpa-domain';
+    const bucket = `${reason}${reason === 'unsupported_jid' ? ` (${domain})` : ''}`;
+    dropReasons.set(bucket, (dropReasons.get(bucket) ?? 0) + 1);
     logger.debug({ event, reason }, 'pesan dibuang oleh allowlist');
     return;
   }
   publish(event, buildPayload());
+}
+
+/**
+ * Forwards a message, resolving a LID-addressed chat to its phone number first.
+ *
+ * Without this, every chat WhatsApp addresses by LID is dropped as an
+ * unsupported JID and can never match the allowlist. The reported
+ * conversation_id is always the phone JID, so the backend keys on the number
+ * regardless of how WhatsApp addressed the chat.
+ */
+function forwardMessage(event, msg, buildPayload) {
+  lidMap.noteFromKey(msg?.key);
+  const jid = lidMap.jidForKey(msg?.key) ?? msg?.key?.remoteJid;
+  forwardIfAllowed(event, jid, () => ({ ...buildPayload(), conversation_id: jid }));
 }
 
 async function startSocket() {
@@ -176,13 +203,18 @@ async function startSocket() {
       'history sync',
     );
 
-    // Metadata for the picker. Names and numbers only; see contacts.js.
-    for (const c of contacts ?? []) directory.noteContact(c);
+    // History contacts carry both forms, which is the cheapest way to learn the
+    // LID pairings before any message arrives.
+    for (const c of contacts ?? []) {
+      lidMap.note(c.id, c.lid);
+      directory.noteContact(c);
+    }
     for (const c of chats ?? []) directory.noteChat(c);
 
     for (const m of messages) {
-      directory.noteMessageActivity(m);
-      forwardIfAllowed('message.ingested', m.key?.remoteJid, () => normalizeMessage(m));
+      lidMap.noteFromKey(m.key);
+      directory.noteMessageActivity(m, lidMap.phoneForKey(m.key));
+      forwardMessage('message.ingested', m, () => normalizeMessage(m));
     }
   });
 
@@ -192,15 +224,15 @@ async function startSocket() {
       // Note the conversation before the allowlist check: a dropped message
       // still proves the chat exists, which is what the picker needs. Only the
       // JID, timestamp, and pushName are taken — never the content.
-      directory.noteMessageActivity(m);
-      forwardIfAllowed('message.ingested', m.key?.remoteJid, () => normalizeMessage(m));
+      lidMap.noteFromKey(m.key);
+      directory.noteMessageActivity(m, lidMap.phoneForKey(m.key));
+      forwardMessage('message.ingested', m, () => normalizeMessage(m));
     }
   });
 
   sock.ev.on('messages.update', (updates) => {
     for (const u of updates) {
-      forwardIfAllowed('message.updated', u.key?.remoteJid, () => ({
-        conversation_id: u.key?.remoteJid ?? null,
+      forwardMessage('message.updated', u, () => ({
         message_id: u.key?.id ?? null,
         update: u.update ?? null,
       }));
@@ -208,7 +240,8 @@ async function startSocket() {
   });
 
   sock.ev.on('messages.delete', (payload) => {
-    const jid = payload?.keys?.[0]?.remoteJid ?? payload?.jid;
+    const key = payload?.keys?.[0] ?? { remoteJid: payload?.jid };
+    const jid = lidMap.jidForKey(key) ?? key.remoteJid;
     forwardIfAllowed('message.deleted', jid, () => ({
       conversation_id: jid ?? null,
       keys: payload?.keys ?? null,
@@ -217,8 +250,7 @@ async function startSocket() {
 
   sock.ev.on('messages.reaction', (reactions) => {
     for (const rct of reactions) {
-      forwardIfAllowed('message.reaction', rct.key?.remoteJid, () => ({
-        conversation_id: rct.key?.remoteJid ?? null,
+      forwardMessage('message.reaction', rct, () => ({
         message_id: rct.key?.id ?? null,
         reaction: rct.reaction ?? null,
       }));
@@ -262,8 +294,13 @@ async function clearAuth() {
 async function loadDirectory() {
   try {
     const raw = await readFile(DIRECTORY_FILE, 'utf8');
-    if (directory.loadFrom(JSON.parse(raw))) {
-      logger.info({ count: directory.size }, 'daftar chat dimuat dari cache');
+    const data = JSON.parse(raw);
+    lidMap.loadFrom(data.lidMap);
+    if (directory.loadFrom(data)) {
+      logger.info(
+        { count: directory.size, lidMappings: lidMap.size },
+        'daftar chat dimuat dari cache',
+      );
     }
   } catch (err) {
     if (err.code !== 'ENOENT') {
@@ -275,7 +312,11 @@ async function loadDirectory() {
 async function saveDirectory() {
   try {
     await mkdir(dirname(DIRECTORY_FILE), { recursive: true });
-    await writeFile(DIRECTORY_FILE, JSON.stringify(directory.toJSON()), 'utf8');
+    await writeFile(
+      DIRECTORY_FILE,
+      JSON.stringify({ ...directory.toJSON(), lidMap: lidMap.toJSON() }),
+      'utf8',
+    );
   } catch (err) {
     logger.warn({ err: err.message }, 'gagal menyimpan daftar chat');
   }
@@ -330,9 +371,18 @@ async function pollLoop() {
         logger.info({ count: allowlist.size }, 'allowlist diperbarui');
       }
 
+      if (lidMap.size !== lastLidMapSize) {
+        lastLidMapSize = lidMap.size;
+        logger.info({ mappings: lidMap.size }, 'pemetaan LID ke nomor diperbarui');
+      }
+
       if (rejectedSinceLastLog > 0) {
-        logger.info({ dropped: rejectedSinceLastLog }, 'pesan di luar allowlist dibuang');
+        logger.info(
+          { dropped: rejectedSinceLastLog, reasons: Object.fromEntries(dropReasons) },
+          'pesan di luar allowlist dibuang',
+        );
         rejectedSinceLastLog = 0;
+        dropReasons.clear();
       }
 
       // Only publish when something changed; history sync produces long bursts.
