@@ -82,6 +82,71 @@ test('snapshot tidak pernah memuat isi pesan', () => {
   assert.ok(!JSON.stringify(row).includes('rahasia'));
 });
 
+test('pesan menjadikan percakapan sebagai kandidat', () => {
+  const d = new ContactDirectory();
+  // Pengiriman offline datang lewat messages.upsert tanpa event chats.* apa pun.
+  d.noteMessageActivity({
+    key: { remoteJid: '6281234567890@s.whatsapp.net', id: 'A1', fromMe: false },
+    messageTimestamp: 1785000000,
+    pushName: 'Budi',
+  });
+
+  const got = d.snapshot();
+  assert.equal(got.length, 1);
+  assert.equal(got[0].phone, '6281234567890');
+  assert.equal(got[0].name, 'Budi');
+  assert.equal(got[0].last_message_at, new Date(1785000000 * 1000).toISOString());
+});
+
+test('pushName tidak dipakai untuk pesan dari diri sendiri', () => {
+  const d = new ContactDirectory();
+  // pushName pada pesan keluar adalah nama pemilik akun, bukan lawan bicara.
+  d.noteMessageActivity({
+    key: { remoteJid: '6281234567890@s.whatsapp.net', id: 'A1', fromMe: true },
+    messageTimestamp: 1785000000,
+    pushName: 'Nama Saya Sendiri',
+  });
+
+  assert.equal(d.snapshot()[0].name, '', 'nama sendiri tidak boleh jadi nama kontak');
+});
+
+test('metadata pesan diambil tanpa isi pesan', () => {
+  const d = new ContactDirectory();
+  d.noteMessageActivity({
+    key: { remoteJid: '6281234567890@s.whatsapp.net', id: 'A1', fromMe: false },
+    messageTimestamp: 1785000000,
+    pushName: 'Budi',
+    message: { conversation: 'rahasia jangan bocor' },
+  });
+
+  const dump = JSON.stringify(d.snapshot());
+  assert.ok(!dump.includes('rahasia'), 'isi pesan tidak boleh masuk kandidat');
+  assert.ok(!dump.includes('A1'), 'id pesan tidak diperlukan di kandidat');
+});
+
+test('pesan dari grup tidak menjadi kandidat', () => {
+  const d = new ContactDirectory();
+  d.noteMessageActivity({
+    key: { remoteJid: '6281234567890-1600000000@g.us', id: 'A1', fromMe: false },
+    messageTimestamp: 1785000000,
+    pushName: 'Budi',
+  });
+
+  assert.equal(d.size, 0);
+});
+
+test('pesan terbaru memperbarui waktu aktivitas', () => {
+  const d = new ContactDirectory();
+  const jid = '6281234567890@s.whatsapp.net';
+  d.noteMessageActivity({ key: { remoteJid: jid, fromMe: false }, messageTimestamp: 1785000000 });
+  d.noteMessageActivity({ key: { remoteJid: jid, fromMe: false }, messageTimestamp: 1785009999 });
+
+  assert.equal(
+    d.snapshot()[0].last_message_at,
+    new Date(1785009999 * 1000).toISOString(),
+  );
+});
+
 test('timestamp tidak masuk akal tidak dijadikan tanggal', () => {
   const d = new ContactDirectory();
   d.noteChat({ id: '6281234567890@s.whatsapp.net', conversationTimestamp: 0 });
