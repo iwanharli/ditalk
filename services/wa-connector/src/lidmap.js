@@ -41,6 +41,14 @@ export class LidMap {
     return this.byLid.size;
   }
 
+  /** Whether a phone number already has a LID pairing. */
+  hasPhone(phone) {
+    for (const mapped of this.byLid.values()) {
+      if (mapped === phone) return true;
+    }
+    return false;
+  }
+
   /** Records a pairing seen in history contacts. */
   note(phoneJid, lidJid) {
     const lid = lidKey(lidJid);

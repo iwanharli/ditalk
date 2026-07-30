@@ -423,6 +423,36 @@ async function requestOlderHistory(req) {
   }
 }
 
+/**
+ * Looks up the LID for selected contacts that do not have one yet.
+ *
+ * The address book only covers saved contacts, and an incoming message is the
+ * only other teacher — so a chat with an unsaved number whose latest message is
+ * one we sent could never be resolved, and every message in it would be dropped.
+ *
+ * onWhatsApp takes phone numbers and returns their LID, which closes that gap
+ * directly. It is limited to numbers the user explicitly selected, so it stays a
+ * handful of lookups rather than a sweep of the address book.
+ */
+async function ensureLidForSelected(phones) {
+  if (!socketOpen || !sock) return;
+
+  const missing = phones.filter((p) => !lidMap.hasPhone(p));
+  if (missing.length === 0) return;
+
+  try {
+    const results = await sock.onWhatsApp(...missing.map((p) => `+${p}`));
+    let learned = 0;
+    for (const r of results ?? []) {
+      if (r?.lid && r?.jid && lidMap.note(r.jid, r.lid)) learned++;
+    }
+    // Numbers are never logged; only how many pairings were resolved.
+    logger.info({ asked: missing.length, learned }, 'mencari LID untuk kontak terpilih');
+  } catch (err) {
+    logger.warn({ err: err.message }, 'gagal mencari LID kontak terpilih');
+  }
+}
+
 async function handlePairRequest() {
   logger.info('QR baru diminta dari dashboard');
 
@@ -517,6 +547,7 @@ async function pollLoop() {
       // in recency order with thumbnails. See avatars.js for why the pass is
       // deliberately slow.
       const selected = cmd.allowed_phones ?? [];
+      await ensureLidForSelected(selected);
       const selectedSet = new Set(selected);
       const candidates = directory.snapshot().map((c) => c.phone);
 
