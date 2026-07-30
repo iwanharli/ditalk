@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Loader2,
   Plus,
+  RefreshCw,
   Search,
   Trash2,
   User,
@@ -80,7 +81,13 @@ function relativeTime(iso: string | null | undefined): string | null {
   return formatDistanceToNow(d, { addSuffix: true, locale: idLocale })
 }
 
-export function ContactPicker({ rejections }: { rejections: Rejection[] }) {
+export function ContactPicker({
+  rejections,
+  connected,
+}: {
+  rejections: Rejection[]
+  connected: boolean
+}) {
   const qc = useQueryClient()
   const [query, setQuery] = useState('')
   const [manualOpen, setManualOpen] = useState(false)
@@ -178,7 +185,7 @@ export function ContactPicker({ rejections }: { rejections: Rejection[] }) {
             ))}
           </div>
         ) : rows.length === 0 ? (
-          <EmptyState deviceListAvailable={contacts.data?.device_list_available ?? false} />
+          <EmptyState connected={connected} />
         ) : filtered.length === 0 ? (
           <p className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
             Tidak ada kontak yang cocok dengan “{query}”.
@@ -318,19 +325,62 @@ function ContactRowItem({
   )
 }
 
-function EmptyState({ deviceListAvailable }: { deviceListAvailable: boolean }) {
+/**
+ * Explains why the list is empty, and names the actual remedy.
+ *
+ * WhatsApp sends its full history sync only once, right after a device is
+ * linked. On a later reconnect it sends nothing, so "wait a moment" would be
+ * wrong: without a re-pair or new message activity the list stays empty forever.
+ */
+function EmptyState({ connected }: { connected: boolean }) {
+  if (!connected) {
+    return (
+      <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed px-6 py-10 text-center">
+        <span className="grid size-10 place-items-center rounded-full bg-muted">
+          <Users className="size-5 text-muted-foreground" />
+        </span>
+        <p className="text-sm font-medium">WhatsApp belum tertaut</p>
+        <p className="max-w-sm text-sm text-muted-foreground">
+          Pindai QR di panel Status lebih dulu, atau masukkan nomor manual di bawah.
+        </p>
+      </div>
+    )
+  }
+
   return (
-    <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed px-6 py-10 text-center">
-      <span className="grid size-10 place-items-center rounded-full bg-muted">
-        <Users className="size-5 text-muted-foreground" />
-      </span>
-      <p className="text-sm font-medium">
-        {deviceListAvailable ? 'Belum ada kontak dipilih' : 'Belum ada percakapan terbaca'}
-      </p>
-      <p className="max-w-sm text-sm text-muted-foreground">
-        {deviceListAvailable
-          ? 'Pilih kontak dari daftar untuk mulai dianalisis.'
-          : 'Daftar percakapan muncul beberapa saat setelah WhatsApp tertaut. Anda juga bisa memasukkan nomor manual.'}
+    <div className="space-y-3 rounded-lg border border-dashed px-5 py-6">
+      <div className="flex items-start gap-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-amber-500/10">
+          <RefreshCw className="size-4 text-amber-600 dark:text-amber-500" />
+        </span>
+        <div className="space-y-1">
+          <p className="text-sm font-medium">Daftar percakapan belum tersedia</p>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            WhatsApp hanya mengirim riwayat percakapan sekali, tepat setelah perangkat
+            ditautkan. Karena itu daftar ini tidak akan terisi sendiri pada koneksi
+            berikutnya.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-2 pl-12 text-sm">
+        <p className="font-medium">Dua cara mengisinya:</p>
+        <ol className="list-outside list-decimal space-y-1.5 pl-4 text-muted-foreground">
+          <li>
+            Kirim atau terima satu pesan WhatsApp — kontak itu muncul di sini dalam
+            beberapa detik.
+          </li>
+          <li>
+            Tautkan ulang untuk mengambil seluruh riwayat sekaligus: tekan{' '}
+            <span className="font-medium text-foreground">Lepas perangkat</span> di
+            panel Status, lalu pindai QR yang baru. Setelah itu daftarnya tersimpan
+            dan tidak hilang saat restart.
+          </li>
+        </ol>
+      </div>
+
+      <p className="pl-12 text-xs text-muted-foreground">
+        Atau lewati saja dan masukkan nomor manual di bawah.
       </p>
     </div>
   )
