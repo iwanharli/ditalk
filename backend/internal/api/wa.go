@@ -131,6 +131,40 @@ func serveImage(w http.ResponseWriter, r *http.Request, data []byte, mime, versi
 	_, _ = w.Write(data)
 }
 
+// handleBackfillRetry lets the user ask for another attempt at pulling older
+// history for a contact.
+//
+// Backfill stops once WhatsApp returns nothing older, which is usually right.
+// But "nothing older" can also mean the request went out at a bad moment, and
+// without a retry the conversation would stay stuck at whatever it had.
+func (s *Server) handleBackfillRetry(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+
+	phone, err := waid.NormalizePhone(r.PathValue("phone"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody("invalid_phone"))
+		return
+	}
+
+	conversationID, err := s.db.ConversationIDForJID(
+		r.Context(), s.cipher, userID, waid.JIDFromPhone(phone))
+	if errors.Is(err, storage.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, errBody("conversation_not_found"))
+		return
+	}
+	if err != nil {
+		s.log.Printf("resolve conversation: %v", err)
+		writeJSON(w, http.StatusInternalServerError, errBody("retry_failed"))
+		return
+	}
+
+	s.wa.Backfill.Reset(conversationID)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "backfill_restarted"})
+}
+
 // contactRow is one line in the picker: a chat that exists on the device, an
 // already-registered number, or both.
 type contactRow struct {

@@ -43,6 +43,7 @@ import {
   deleteContact,
   getContacts,
   rejectionLabels,
+  retryBackfill,
   setContactActive,
   type ContactRow,
   type Rejection,
@@ -117,6 +118,15 @@ export function ContactPicker({
     mutationFn: ({ id, active }: { id: string; active: boolean }) =>
       setContactActive(id, active),
     onSuccess: invalidate,
+    onError: (err) => toast.error(describeError(err)),
+  })
+
+  const retry = useMutation({
+    mutationFn: (phone: string) => retryBackfill(phone),
+    onSuccess: () => {
+      toast.success('Mencoba mengambil riwayat lebih lama lagi.')
+      invalidate()
+    },
     onError: (err) => toast.error(describeError(err)),
   })
 
@@ -203,6 +213,7 @@ export function ContactPicker({
                   row.contact_id && toggle.mutate({ id: row.contact_id, active })
                 }
                 onRemove={() => row.contact_id && remove.mutate(row.contact_id)}
+                onRetry={() => retry.mutate(row.phone)}
               />
             ))}
           </ul>
@@ -249,12 +260,14 @@ function ContactRowItem({
   onAdd,
   onToggle,
   onRemove,
+  onRetry,
 }: {
   row: ContactRow
   busy: boolean
   onAdd: () => void
   onToggle: (active: boolean) => void
   onRemove: () => void
+  onRetry: () => void
 }) {
   const title = row.label || row.name
   const last = relativeTime(row.last_message_at)
@@ -305,7 +318,7 @@ function ContactRowItem({
           {last && <span className="ml-2 font-sans">· {last}</span>}
         </p>
 
-        {row.registered && <StorageLine row={row} />}
+        {row.registered && <StorageLine row={row} onRetry={onRetry} />}
       </div>
 
       {row.registered ? (
@@ -350,7 +363,7 @@ function ContactRowItem({
  * Without this the app looks idle during a backfill that can take minutes, and
  * "0 pesan" gives no hint whether that is a failure or simply not started.
  */
-function StorageLine({ row }: { row: ContactRow }) {
+function StorageLine({ row, onRetry }: { row: ContactRow; onRetry: () => void }) {
   if (row.stored === 0) {
     return (
       <p className="mt-0.5 text-xs text-muted-foreground">
@@ -370,10 +383,19 @@ function StorageLine({ row }: { row: ContactRow }) {
         </span>
       )}
       {bf?.done && (
-        <span className="inline-flex items-center gap-1 text-primary">
-          <CheckCircle2 className="size-3" />
-          riwayat lengkap
-        </span>
+        <>
+          <span className="inline-flex items-center gap-1 text-primary">
+            <CheckCircle2 className="size-3" />
+            tidak ada riwayat lebih lama
+          </span>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            coba lagi
+          </button>
+        </>
       )}
     </p>
   )

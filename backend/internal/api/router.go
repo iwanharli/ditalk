@@ -68,6 +68,7 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("GET /wa/contacts", s.handleWAContacts)
 	mux.HandleFunc("GET /wa/contacts/{phone}/avatar", s.handleContactAvatar)
+	mux.HandleFunc("POST /wa/contacts/{phone}/backfill", s.handleBackfillRetry)
 	mux.HandleFunc("GET /wa/allowlist", s.handleAllowlistList)
 	mux.HandleFunc("POST /wa/allowlist", s.handleAllowlistAdd)
 	mux.HandleFunc("PATCH /wa/allowlist/{id}", s.handleAllowlistSetActive)
