@@ -314,10 +314,15 @@ async function startSocket() {
  */
 async function ensureContactNames() {
   if (namesRequested) return;
-  // The address book supplies two things: display names, and the LID pairing
-  // for each contact. Skipping it once names are cached would leave the LID map
-  // empty, and every chat WhatsApp addresses by LID would keep being dropped.
-  if (directory.nameCount > 0 && lidMap.size > 0) return;
+  // The address book supplies two things: display names and the LID pairing for
+  // each contact, so it is needed when either is missing.
+  //
+  // Names are only worth fetching once some chats exist to attach them to.
+  // Without that check a machine whose chat list is still empty would send a
+  // pointless request to WhatsApp on every single startup.
+  const needsMappings = lidMap.size === 0;
+  const needsNames = directory.size > 0 && directory.nameCount < directory.size;
+  if (!needsMappings && !needsNames) return;
   namesRequested = true;
 
   try {
