@@ -13,6 +13,7 @@ import (
 	"ditalk/backend/internal/ai"
 	"ditalk/backend/internal/api"
 	"ditalk/backend/internal/config"
+	"ditalk/backend/internal/crypto"
 	"ditalk/backend/internal/queue"
 	"ditalk/backend/internal/storage"
 )
@@ -34,9 +35,19 @@ func main() {
 	q := queue.NewClient(cfg.RedisAddr, cfg.RedisDB)
 	defer q.Close()
 
+	// Without a key the server still starts, but endpoints that persist chat
+	// content refuse to run rather than writing plaintext to disk.
+	var cipher *crypto.Cipher
+	if cipher, err = crypto.New(cfg.EncryptionKey); err != nil {
+		log.Printf("WARNING: encryption disabled (%v); import and sync will be rejected", err)
+		cipher = nil
+	}
+
+	logger := log.New(os.Stderr, "", log.LstdFlags)
+
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           api.NewServer(cfg, db, q, ai.NewClient(cfg)).Routes(),
+		Handler:           api.NewServer(cfg, db, q, ai.NewClient(cfg), cipher, logger).Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
