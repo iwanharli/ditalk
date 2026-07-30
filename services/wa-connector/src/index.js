@@ -12,6 +12,7 @@ import { publish, fetchCommands } from './publisher.js';
 import { Allowlist } from './allowlist.js';
 import { readOwnProfile } from './profile.js';
 import { ContactDirectory } from './contacts.js';
+import { AvatarFetcher } from './avatars.js';
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
@@ -26,6 +27,10 @@ const DIRECTORY_FILE = join(dirname(AUTH_DIR), '.wa-chats.json');
 const allowlist = new Allowlist();
 const directory = new ContactDirectory();
 let sock = null;
+// The socket object exists before it finishes authenticating, so anything that
+// queries WhatsApp must wait for 'open' rather than merely for sock to be set.
+let socketOpen = false;
+const avatars = new AvatarFetcher(() => (socketOpen ? sock : null));
 let stopping = false;
 let rejectedSinceLastLog = 0;
 
@@ -109,6 +114,7 @@ async function startSocket() {
 
     if (connection === 'open') {
       const selfJid = sock.user?.id ?? '';
+      socketOpen = true;
       consecutiveFailures = 0;
       logger.info('tersambung ke WhatsApp');
 
@@ -123,6 +129,7 @@ async function startSocket() {
     }
 
     if (connection === 'close') {
+      socketOpen = false;
       const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
 
       if (statusCode === DisconnectReason.loggedOut) {
@@ -152,9 +159,20 @@ async function startSocket() {
     }
   });
 
-  sock.ev.on('messaging-history.set', ({ chats, contacts, messages, isLatest }) => {
+  sock.ev.on('messaging-history.set', ({ chats, contacts, messages, isLatest, syncType }) => {
+    // syncType and named counts matter for diagnosing a nameless contact list:
+    // display names arrive almost entirely via the PUSH_NAME sync, while RECENT
+    // and FULL syncs derive a name from chat.name, which is normally empty for
+    // one-to-one chats. Counts only — no names or numbers reach the log.
     logger.info(
-      { messages: messages.length, chats: chats?.length ?? 0, isLatest },
+      {
+        syncType,
+        messages: messages.length,
+        chats: chats?.length ?? 0,
+        contacts: contacts?.length ?? 0,
+        named: (contacts ?? []).filter((c) => c.name || c.notify || c.verifiedName).length,
+        isLatest,
+      },
       'history sync',
     );
 
@@ -267,6 +285,7 @@ async function handlePairRequest() {
   logger.info('QR baru diminta dari dashboard');
 
   if (sock) {
+    socketOpen = false;
     try {
       // end() drops the socket without logging the device out, so an existing
       // link survives if the user only wanted to refresh a stale code.
@@ -322,6 +341,21 @@ async function pollLoop() {
         await publish('contacts.discovered', { contacts: directory.snapshot() });
         await saveDirectory();
         logger.info({ count: directory.size }, 'kandidat kontak dikirim');
+      }
+
+      // Profile pictures only for contacts the user selected. See avatars.js for
+      // why this is not done for every discovered chat.
+      const selected = cmd.allowed_phones ?? [];
+      avatars.retainOnly(selected);
+      if (selected.length > 0) {
+        void avatars
+          .run(selected, (phone, avatar, mime) =>
+            publish('contact.avatar', { phone, avatar, avatar_mime: mime }),
+          )
+          .then((n) => {
+            if (n > 0) logger.info({ count: n }, 'foto profil kontak dikirim');
+          })
+          .catch((err) => logger.warn({ err: err.message }, 'gagal mengambil foto kontak'));
       }
 
       if (cmd.logout) await handleLogout();

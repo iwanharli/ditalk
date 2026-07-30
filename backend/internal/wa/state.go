@@ -97,6 +97,17 @@ type State struct {
 	// not been allowlisted, so the app has no basis to retain anything about
 	// them; the list exists purely so the owner can choose (doc bab 19.1).
 	candidates []Candidate
+
+	// contactAvatars holds profile pictures for allowlisted contacts, keyed by
+	// normalized phone. Memory only, like the account's own picture: these are
+	// photographs of other people and the app has no need to retain them.
+	contactAvatars map[string]avatar
+}
+
+type avatar struct {
+	data    []byte
+	mime    string
+	version string
 }
 
 // Candidate is a chat the user may choose to analyze. It deliberately carries no
@@ -108,7 +119,11 @@ type Candidate struct {
 }
 
 func NewState() *State {
-	return &State{status: StatusDisconnected, updatedAt: time.Now()}
+	return &State{
+		status:         StatusDisconnected,
+		updatedAt:      time.Now(),
+		contactAvatars: map[string]avatar{},
+	}
 }
 
 // Command is what the connector receives when it polls for instructions.
@@ -200,6 +215,7 @@ func (s *State) SetStatus(status Status, detail string) {
 		s.selfName = ""
 		s.avatar, s.avatarMime, s.avatarVersion = nil, "", ""
 		s.candidates = nil
+		s.contactAvatars = map[string]avatar{}
 	case StatusDisconnected:
 		// A dropped socket usually reconnects to the same account, so identity is
 		// kept to avoid the profile flickering away and back.
@@ -256,6 +272,49 @@ func (s *State) Candidates() []Candidate {
 
 	out := make([]Candidate, len(s.candidates))
 	copy(out, s.candidates)
+	return out
+}
+
+// SetContactAvatar stores a contact's profile picture in memory.
+func (s *State) SetContactAvatar(phone string, data []byte, mime string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(data) == 0 {
+		delete(s.contactAvatars, phone)
+		return
+	}
+
+	sum := sha256.Sum256(data)
+	s.contactAvatars[phone] = avatar{
+		data:    data,
+		mime:    mime,
+		version: hex.EncodeToString(sum[:8]),
+	}
+	s.updatedAt = time.Now()
+}
+
+func (s *State) ContactAvatar(phone string) (data []byte, mime, version string, ok bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	a, found := s.contactAvatars[phone]
+	if !found {
+		return nil, "", "", false
+	}
+	return a.data, a.mime, a.version, true
+}
+
+// ContactAvatarVersions lets the contact list say which rows have a picture
+// without inlining the bytes into a polled JSON response.
+func (s *State) ContactAvatarVersions() map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make(map[string]string, len(s.contactAvatars))
+	for phone, a := range s.contactAvatars {
+		out[phone] = a.version
+	}
 	return out
 }
 

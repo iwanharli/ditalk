@@ -77,6 +77,11 @@ func (s *Server) handleInternalEvents(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
 
+	case "contact.avatar":
+		s.applyContactAvatarEvent(ev)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+
 	case "message.ingested", "message.updated", "message.deleted", "message.reaction":
 		s.applyMessageEvent(w, r, ev)
 		return
@@ -178,6 +183,50 @@ func (s *Server) applyContactsEvent(ev internalEvent) {
 	}
 
 	s.wa.SetCandidates(out)
+}
+
+type contactAvatarPayload struct {
+	Phone      string `json:"phone"`
+	Avatar     string `json:"avatar"`
+	AvatarMime string `json:"avatar_mime"`
+}
+
+// applyContactAvatarEvent stores a contact's profile picture in memory.
+//
+// Only contacts the user selected reach here; the connector does not fetch
+// pictures for the wider discovered list. Nothing is written to disk.
+func (s *Server) applyContactAvatarEvent(ev internalEvent) {
+	var p contactAvatarPayload
+	if err := json.Unmarshal(ev.Payload, &p); err != nil {
+		s.log.Printf("contact avatar: malformed payload")
+		return
+	}
+
+	phone, err := waid.NormalizePhone(p.Phone)
+	if err != nil {
+		return
+	}
+
+	if p.Avatar == "" {
+		s.wa.SetContactAvatar(phone, nil, "")
+		return
+	}
+
+	data, err := base64.StdEncoding.DecodeString(p.Avatar)
+	if err != nil {
+		s.log.Printf("contact avatar: bukan base64 valid")
+		return
+	}
+
+	// These bytes are served back to the browser, so an SVG or HTML payload here
+	// would be a scripting vector.
+	mime := sniffImageMIME(data)
+	if mime == "" {
+		s.log.Printf("contact avatar: bukan gambar yang didukung")
+		return
+	}
+
+	s.wa.SetContactAvatar(phone, data, mime)
 }
 
 func (s *Server) applyMessageEvent(w http.ResponseWriter, r *http.Request, ev internalEvent) {
