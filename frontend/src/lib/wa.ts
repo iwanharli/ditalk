@@ -81,7 +81,6 @@ export const contactRowSchema = z.object({
 
 export const contactsResponseSchema = z.object({
   contacts: z.array(contactRowSchema),
-  device_list_available: z.boolean(),
 })
 
 export type ContactRow = z.infer<typeof contactRowSchema>

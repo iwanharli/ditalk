@@ -193,7 +193,10 @@ export function PairingPage() {
             </CardContent>
           </Card>
 
-          <ContactPicker rejections={allowlist.data?.rejections ?? []} />
+          <ContactPicker
+            rejections={allowlist.data?.rejections ?? []}
+            connected={connection?.status === 'connected'}
+          />
         </div>
       </PageSections>
     </PageContainer>

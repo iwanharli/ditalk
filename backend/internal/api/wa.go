@@ -188,12 +188,7 @@ func (s *Server) handleWAContacts(w http.ResponseWriter, r *http.Request) {
 		return displayName(a) < displayName(b)
 	})
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"contacts": rows,
-		// False tells the UI to explain that the device list is not available yet
-		// rather than implying the user has no chats.
-		"device_list_available": len(s.wa.Candidates()) > 0,
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"contacts": rows})
 }
 
 func displayName(c *contactRow) string {
