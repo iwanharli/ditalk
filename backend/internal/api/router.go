@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/go-playground/validator/v10"
@@ -9,6 +10,7 @@ import (
 
 	"ditalk/backend/internal/ai"
 	"ditalk/backend/internal/config"
+	"ditalk/backend/internal/crypto"
 	"ditalk/backend/internal/queue"
 	"ditalk/backend/internal/storage"
 )
@@ -18,15 +20,29 @@ type Server struct {
 	db       *storage.DB
 	queue    *queue.Client
 	ai       *ai.Client
+	cipher   *crypto.Cipher
+	log      *log.Logger
 	validate *validator.Validate
 }
 
-func NewServer(cfg config.Config, db *storage.DB, q *queue.Client, aiClient *ai.Client) *Server {
+// NewServer wires dependencies. cipher may be nil when no encryption key is
+// configured; endpoints that persist chat content refuse to run in that case
+// rather than storing plaintext.
+func NewServer(
+	cfg config.Config,
+	db *storage.DB,
+	q *queue.Client,
+	aiClient *ai.Client,
+	cipher *crypto.Cipher,
+	logger *log.Logger,
+) *Server {
 	return &Server{
 		cfg:      cfg,
 		db:       db,
 		queue:    q,
 		ai:       aiClient,
+		cipher:   cipher,
+		log:      logger,
 		validate: validator.New(validator.WithRequiredStructEnabled()),
 	}
 }
@@ -42,6 +58,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /wa/pair", notImplemented)
 	mux.HandleFunc("GET /wa/status", notImplemented)
 	mux.HandleFunc("DELETE /wa/session", notImplemented)
+
+	// Import Export Chat is the first ingestion path: no unofficial API, and the
+	// dataset stays under the user's control (doc bab 30, Keputusan 1).
+	mux.HandleFunc("POST /imports/preview", s.handleImportPreview)
+	mux.HandleFunc("POST /imports", s.handleImport)
 
 	mux.HandleFunc("POST /conversations/sync", notImplemented)
 	mux.HandleFunc("GET /conversations/{id}/messages", notImplemented)

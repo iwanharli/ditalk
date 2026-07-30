@@ -37,6 +37,34 @@ Semua jalan native di host, tanpa container.
 cp .env.example .env    # lalu isi OPENAI_API_KEY, ENCRYPTION_KEY, JWT_SECRET
 ```
 
+## Import Export Chat
+
+Jalur ingestion pertama, tanpa menyentuh API tidak resmi (bab 30, Keputusan 1).
+
+```bash
+# 1. Lihat isi file dulu tanpa menyimpan apa pun
+curl -F "file=@chat.txt" -F "self_name=Nama Anda" \
+  http://localhost:8080/imports/preview
+
+# 2. Simpan setelah memastikan nama pengirim benar
+curl -F "file=@chat.txt" -F "self_name=Nama Anda" \
+     -F "display_name=Nama Lawan Bicara" -F "chat_key=chat-001" \
+  http://localhost:8080/imports
+```
+
+Parser menangani format Android, iOS, dan 12-jam AS; mendeteksi urutan tanggal
+dari isi file (bukan mengasumsikan satu format); menggabungkan pesan multi-baris;
+mengenali media, attachment, pesan dihapus/diedit; serta membuang tanda bidi yang
+disisipkan WhatsApp. Tanggal mustahil seperti 31 Februari **dibuang dengan
+peringatan**, bukan digeser ke 3 Maret.
+
+`import` bersifat idempoten: ID pesan diturunkan dari isinya, jadi mengimpor
+ulang file yang tumpang tindih akan melewati baris yang sudah ada. Sesi dihitung
+ulang, tidak digandakan.
+
+Tanpa `ENCRYPTION_KEY`, `preview` tetap jalan (tidak menulis) tetapi `import`
+ditolak `503` — server tidak akan pernah menulis isi chat sebagai plaintext.
+
 ## Database
 
 Nama database: **`db_ditalk`** (PostgreSQL + pgvector). Migrasi memakai
