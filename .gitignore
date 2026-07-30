@@ -39,3 +39,11 @@ media/
 # Logs
 *.log
 npm-debug.log*
+
+# Chat exports and anything derived from them. These contain the full contents
+# of real conversations, including media, and this repository is public.
+backend/data-chat/
+data-chat/
+*.zip
+WhatsApp Chat*
+_chat.txt

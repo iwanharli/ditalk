@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -82,6 +83,13 @@ func (db *DB) ImportExport(
 			continue
 		}
 
+		// A message with no text at all gives analysis nothing, and it cannot be
+		// deduplicated by content either, so re-importing would keep adding it.
+		if strings.TrimSpace(m.Text) == "" {
+			out.Skipped++
+			continue
+		}
+
 		textCipher, err := c.EncryptString(m.Text)
 		if err != nil {
 			return nil, fmt.Errorf("encrypt text: %w", err)
@@ -95,9 +103,9 @@ func (db *DB) ImportExport(
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO messages (
 			  conversation_id, wa_message_id, sender_role, timestamp,
-			  message_type, text_cipher, is_deleted, edited_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			ON CONFLICT (conversation_id, wa_message_id) DO NOTHING`,
+			  message_type, text_cipher, is_deleted, edited_at, content_hash
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, nullif($9,''))
+			ON CONFLICT DO NOTHING`,
 			conversationID,
 			syntheticID(m),
 			role,
@@ -106,6 +114,7 @@ func (db *DB) ImportExport(
 			textCipher,
 			m.IsDeleted,
 			editedAt(m),
+			ContentHash(m.Timestamp, role, m.Text),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("insert message line %d: %w", m.LineNumber, err)
