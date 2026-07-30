@@ -108,7 +108,13 @@ type avatar struct {
 	data    []byte
 	mime    string
 	version string
+	setAt   time.Time
 }
+
+// maxContactAvatars bounds memory. The picker shows at most a few hundred rows,
+// but the set of "recent" contacts drifts over time, so without a cap the map
+// would keep every picture ever fetched for the life of the process.
+const maxContactAvatars = 500
 
 // Candidate is a chat the user may choose to analyze. It deliberately carries no
 // message content, preview, or media.
@@ -285,13 +291,33 @@ func (s *State) SetContactAvatar(phone string, data []byte, mime string) {
 		return
 	}
 
+	if _, exists := s.contactAvatars[phone]; !exists && len(s.contactAvatars) >= maxContactAvatars {
+		s.evictOldestAvatar()
+	}
+
 	sum := sha256.Sum256(data)
 	s.contactAvatars[phone] = avatar{
 		data:    data,
 		mime:    mime,
 		version: hex.EncodeToString(sum[:8]),
+		setAt:   time.Now(),
 	}
 	s.updatedAt = time.Now()
+}
+
+// evictOldestAvatar drops the least recently stored picture. Caller holds the lock.
+func (s *State) evictOldestAvatar() {
+	var oldestPhone string
+	var oldestAt time.Time
+
+	for phone, a := range s.contactAvatars {
+		if oldestPhone == "" || a.setAt.Before(oldestAt) {
+			oldestPhone, oldestAt = phone, a.setAt
+		}
+	}
+	if oldestPhone != "" {
+		delete(s.contactAvatars, oldestPhone)
+	}
 }
 
 func (s *State) ContactAvatar(phone string) (data []byte, mime, version string, ok bool) {

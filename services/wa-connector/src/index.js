@@ -435,13 +435,24 @@ async function pollLoop() {
         logger.info({ count: directory.size }, 'kandidat kontak dikirim');
       }
 
-      // Profile pictures only for contacts the user selected. See avatars.js for
-      // why this is not done for every discovered chat.
+      // Selected contacts first and at full size; the rest of the picker follows
+      // in recency order with thumbnails. See avatars.js for why the pass is
+      // deliberately slow.
       const selected = cmd.allowed_phones ?? [];
-      avatars.retainOnly(selected);
-      if (selected.length > 0) {
+      const selectedSet = new Set(selected);
+      const candidates = directory.snapshot().map((c) => c.phone);
+
+      const targets = [
+        ...selected.map((phone) => ({ phone, full: true })),
+        ...candidates
+          .filter((phone) => !selectedSet.has(phone))
+          .map((phone) => ({ phone, full: false })),
+      ];
+
+      avatars.retainOnly(targets.map((t) => t.phone));
+      if (targets.length > 0) {
         void avatars
-          .run(selected, (phone, avatar, mime) =>
+          .run(targets, (phone, avatar, mime) =>
             publish('contact.avatar', { phone, avatar, avatar_mime: mime }),
           )
           .then((n) => {
