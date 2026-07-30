@@ -1,14 +1,18 @@
 /**
  * Fetches profile pictures for contacts, one at a time and only when needed.
  *
- * SCOPE: only contacts the user actually selected (allowlisted). Fetching for
- * every discovered chat would mean hundreds of requests to WhatsApp on an
- * unofficial client — a realistic way to get an account restricted — and it
- * would download photographs of people the user never chose to analyze, which
- * is exactly what the allowlist exists to prevent.
- *
  * Pictures are held in memory only, here and in the backend. They are never
- * written to disk or to the database.
+ * written to disk or to the database, and they are dropped on logout.
+ *
+ * Two sizes are used on purpose:
+ *   - selected contacts get the full image; they appear in profile views
+ *   - everyone else in the picker gets the thumbnail, which is a fraction of
+ *     the bytes and plenty for a 36px row
+ *
+ * The whole pass is deliberately slow. These are hundreds of requests to
+ * WhatsApp from an unofficial client, which is a realistic way to get an
+ * account restricted, so they go out one at a time with a gap and in recency
+ * order, so the rows the user is most likely to look at fill in first.
  */
 
 import pino from 'pino';
@@ -38,7 +42,7 @@ export class AvatarFetcher {
     this.running = false;
   }
 
-  /** Drops contacts that are no longer allowlisted so they get re-fetched if re-added. */
+  /** Drops contacts no longer in the picker so they get re-fetched if they return. */
   retainOnly(phones) {
     const keep = new Set(phones);
     for (const phone of [...this.attempted.keys()]) {
@@ -55,10 +59,12 @@ export class AvatarFetcher {
 
   /**
    * Fetches any missing pictures and hands them to `publishOne`.
-   * Returns the number published. Safe to call repeatedly; only one pass runs
-   * at a time.
+   *
+   * `entries` is [{ phone, full }] in the order they should be fetched; `full`
+   * asks for the full image rather than the thumbnail. Returns the number
+   * published. Safe to call repeatedly; only one pass runs at a time.
    */
-  async run(phones, publishOne) {
+  async run(entries, publishOne) {
     if (this.running) return 0;
     const sock = this.sockProvider();
     if (!sock) return 0;
@@ -67,10 +73,13 @@ export class AvatarFetcher {
     let published = 0;
 
     try {
-      for (const phone of phones) {
+      for (const { phone, full } of entries) {
         if (!this.needsFetch(phone)) continue;
+        // A pass can take minutes; stop as soon as the socket goes away rather
+        // than firing every remaining request into a dead connection.
+        if (!this.sockProvider()) break;
 
-        const { status, avatar, mime } = await this.fetchOne(sock, phone);
+        const { status, avatar, mime } = await this.fetchOne(sock, phone, full);
 
         // 'settled' means WhatsApp answered: either a picture, or a definite
         // "there is none". Only then does the long refresh interval apply.
@@ -93,10 +102,10 @@ export class AvatarFetcher {
   }
 
   /** Returns { status: 'ok' | 'none' | 'error', avatar?, mime? }. */
-  async fetchOne(sock, phone) {
+  async fetchOne(sock, phone, full = false) {
     const jid = `${phone}@s.whatsapp.net`;
     try {
-      const url = await sock.profilePictureUrl(jid, 'image');
+      const url = await sock.profilePictureUrl(jid, full ? 'image' : 'preview');
       // WhatsApp answered that there is no picture, or privacy hides it.
       if (!url) return { status: 'none' };
 
