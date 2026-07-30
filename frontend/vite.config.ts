@@ -13,9 +13,11 @@ export default defineConfig({
   },
   server: {
     // Keeps the browser on one origin so cookies behave in development.
+    // The port follows the backend's PORT so running on a non-default port does
+    // not silently proxy to a stale server on 8080.
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: `http://localhost:${process.env.BACKEND_PORT ?? process.env.PORT ?? 8080}`,
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api/, ''),
       },
