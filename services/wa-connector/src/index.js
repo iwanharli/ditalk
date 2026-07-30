@@ -1,6 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import makeWASocket, {
+  Browsers,
   DisconnectReason,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
@@ -28,6 +29,13 @@ let sock = null;
 let stopping = false;
 let rejectedSinceLastLog = 0;
 
+// A session that WhatsApp refuses is rejected the same way every time, so
+// retrying forever produces a silent loop with no QR and no explanation. After
+// this many consecutive failures without ever reaching 'open', the connector
+// reports the problem and stops instead of hiding it.
+const MAX_LOGIN_FAILURES = 5;
+let consecutiveFailures = 0;
+
 async function reportConnection(fields) {
   await publish('connection.update', fields);
 }
@@ -53,9 +61,32 @@ async function startSocket() {
   sock = makeWASocket({
     auth: state,
     logger,
-    // This connector never sends messages. Read-only by design (doc bab 1.3).
+
+    // Read-only by design (doc bab 1.3). Beyond never calling a send API, this
+    // also keeps the account from appearing online and stops WhatsApp from
+    // treating the link as an actively-reading client: with presence set to
+    // unavailable, incoming receipts are typed 'inactive' rather than active,
+    // and no read receipt (blue ticks) is ever sent. See baileys-features.md.
     markOnlineOnConnect: false,
+
     syncFullHistory: true,
+
+    // Deliberately the Baileys default, despite the documented advice that a
+    // desktop descriptor is needed for a full history sync.
+    //
+    // Measured against WhatsApp on 30 July 2026 with fresh auth, only this
+    // descriptor is accepted at all. Every desktop descriptor is closed
+    // immediately and never even produces a QR:
+    //
+    //   ["Ubuntu","Chrome"]   -> QR emitted, pairing works
+    //   ["Mac OS","Desktop"]  -> connection closed, no QR
+    //   ["Mac OS","Safari"]   -> connection closed, no QR
+    //   ["Mac OS","Chrome"]   -> connection closed, no QR
+    //   ["Windows","Desktop"] -> connection closed, no QR
+    //
+    // So webSubPlatform stays WEB_BROWSER and history is whatever that yields.
+    // See baileys-features.md section 2 before changing this.
+    browser: Browsers.ubuntu('Chrome'),
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -64,6 +95,10 @@ async function startSocket() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
+      // Receiving a QR means WhatsApp is talking to us and pairing is possible,
+      // so this is not a rejected session. QR refresh cycles also emit 'close',
+      // and counting those would exhaust the budget before the user can scan.
+      consecutiveFailures = 0;
       logger.info('QR baru dibuat, menunggu pemindaian');
       await publish('connection.qr', { status: 'pairing', qr });
     }
@@ -74,6 +109,7 @@ async function startSocket() {
 
     if (connection === 'open') {
       const selfJid = sock.user?.id ?? '';
+      consecutiveFailures = 0;
       logger.info('tersambung ke WhatsApp');
 
       const profile = await readOwnProfile(sock);
@@ -94,6 +130,20 @@ async function startSocket() {
         await reportConnection({ status: 'logged_out' });
         await clearAuth();
         if (!stopping) restart();
+        return;
+      }
+
+      consecutiveFailures++;
+      if (consecutiveFailures >= MAX_LOGIN_FAILURES) {
+        logger.error(
+          { failures: consecutiveFailures },
+          'sesi ditolak berulang kali; perlu pairing ulang',
+        );
+        await reportConnection({
+          status: 'error',
+          detail:
+            'Sesi ditolak WhatsApp. Tekan "Lepas perangkat" lalu pindai QR baru untuk menautkan ulang.',
+        });
         return;
       }
 
@@ -234,6 +284,8 @@ async function handlePairRequest() {
 
 async function handleLogout() {
   logger.warn('logout diminta dari dashboard');
+  // Unlinking is the remedy for a rejected session, so the budget starts over.
+  consecutiveFailures = 0;
   try {
     await sock?.logout();
   } catch {
