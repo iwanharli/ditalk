@@ -29,9 +29,16 @@ const allowlist = new Allowlist();
 const directory = new ContactDirectory();
 const lidMap = new LidMap();
 let lastLidMapSize = 0;
+let lastSavedLidSize = 0;
 // Guards against repeating a full app-state resync on every reconnect.
 let namesRequested = false;
+let authKeys = null;
 let lastNameCount = 0;
+// Diagnostics only: how the address book identifies contacts. Counts, no values.
+let contactsSeen = 0;
+let contactsWithLid = 0;
+let contactsIdIsLid = 0;
+let lastContactsSeen = 0;
 let sock = null;
 // The socket object exists before it finishes authenticating, so anything that
 // queries WhatsApp must wait for 'open' rather than merely for sock to be set.
@@ -92,6 +99,7 @@ function forwardMessage(event, msg, buildPayload) {
 
 async function startSocket() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+  authKeys = state.keys;
 
   sock = makeWASocket({
     auth: state,
@@ -271,11 +279,23 @@ async function startSocket() {
   sock.ev.on('chats.update', (chats) => {
     for (const c of chats) directory.noteChat(c);
   });
+  // The address book carries both identities for a contact, so it is also the
+  // most reliable source of LID pairings — including for chats where the only
+  // recent message is one we sent, which cannot teach the mapping on its own.
   sock.ev.on('contacts.upsert', (contacts) => {
-    for (const c of contacts) directory.noteContact(c);
+    for (const c of contacts) {
+      contactsSeen++;
+      if (c.lid) contactsWithLid++;
+      if (c.id?.endsWith('@lid')) contactsIdIsLid++;
+      lidMap.note(c.id, c.lid);
+      directory.noteContact(c);
+    }
   });
   sock.ev.on('contacts.update', (contacts) => {
-    for (const c of contacts) directory.noteContact(c);
+    for (const c of contacts) {
+      lidMap.note(c.id, c.lid);
+      directory.noteContact(c);
+    }
   });
 }
 
@@ -293,11 +313,25 @@ async function startSocket() {
  * because a full resync is not free.
  */
 async function ensureContactNames() {
-  if (namesRequested || directory.nameCount > 0) return;
+  if (namesRequested) return;
+  // The address book supplies two things: display names, and the LID pairing
+  // for each contact. Skipping it once names are cached would leave the LID map
+  // empty, and every chat WhatsApp addresses by LID would keep being dropped.
+  if (directory.nameCount > 0 && lidMap.size > 0) return;
   namesRequested = true;
 
   try {
-    logger.info('meminta buku alamat untuk nama kontak');
+    // App-state sync is incremental: Baileys resumes from the stored version and
+    // WhatsApp only returns what changed, so an unchanged address book yields
+    // nothing at all. A full snapshot is only sent when the stored version is
+    // zero, so clearing it is the only way to read the book again — which is
+    // required here because the LID pairings live in that snapshot.
+    if (lidMap.size === 0 && authKeys) {
+      await authKeys.set({ 'app-state-sync-version': { 'critical_unblock_low': null } });
+      logger.info('versi app-state dikosongkan untuk mengambil snapshot penuh');
+    }
+
+    logger.info('meminta buku alamat untuk nama dan pemetaan LID');
     await sock.resyncAppState(['critical_unblock_low'], true);
     // The resulting contacts.upsert events are buffered by Baileys and flushed
     // after this resolves, so counting here would always report zero. The poll
@@ -333,6 +367,7 @@ async function loadDirectory() {
     const raw = await readFile(DIRECTORY_FILE, 'utf8');
     const data = JSON.parse(raw);
     lidMap.loadFrom(data.lidMap);
+    lastSavedLidSize = lidMap.size;
     if (directory.loadFrom(data)) {
       logger.info(
         { count: directory.size, lidMappings: lidMap.size },
@@ -432,6 +467,14 @@ async function pollLoop() {
         logger.info({ count: allowlist.size }, 'allowlist diperbarui');
       }
 
+      if (contactsSeen !== lastContactsSeen) {
+        lastContactsSeen = contactsSeen;
+        logger.info(
+          { seen: contactsSeen, withLid: contactsWithLid, idIsLid: contactsIdIsLid },
+          'bentuk kontak dari buku alamat',
+        );
+      }
+
       if (directory.nameCount !== lastNameCount) {
         lastNameCount = directory.nameCount;
         logger.info({ named: lastNameCount, of: directory.size }, 'nama kontak diperbarui');
@@ -457,6 +500,12 @@ async function pollLoop() {
         await publish('contacts.discovered', { contacts: directory.snapshot() });
         await saveDirectory();
         logger.info({ count: directory.size }, 'kandidat kontak dikirim');
+      } else if (lidMap.size !== lastSavedLidSize) {
+        // The LID map is expensive to rebuild: it requires clearing the
+        // app-state version and pulling the whole address book again. Persist it
+        // even when the chat list itself did not change.
+        await saveDirectory();
+        lastSavedLidSize = lidMap.size;
       }
 
       // Selected contacts first and at full size; the rest of the picker follows
