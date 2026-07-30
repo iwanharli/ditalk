@@ -9,7 +9,7 @@ import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import { normalizeMessage } from './normalizer.js';
 import { publish, fetchCommands } from './publisher.js';
-import { Allowlist } from './allowlist.js';
+import { Allowlist, phoneFromJid } from './allowlist.js';
 import { readOwnProfile } from './profile.js';
 import { ContactDirectory } from './contacts.js';
 import { AvatarFetcher } from './avatars.js';
@@ -410,14 +410,23 @@ async function requestOlderHistory(req) {
   if (!socketOpen || !sock) return;
   if (!req?.chat_jid || !req?.oldest_id) return;
 
+  // The backend keys everything on phone numbers, but WhatsApp may track this
+  // conversation under a LID. The request has to name the chat the way the
+  // server does, otherwise it matches nothing and returns silently.
+  const phone = phoneFromJid(req.chat_jid);
+  const chatJid = phone ? lidMap.chatJidForPhone(phone) : req.chat_jid;
+
   try {
     await sock.fetchMessageHistory(
       req.count ?? 50,
-      { remoteJid: req.chat_jid, fromMe: !!req.oldest_from_me, id: req.oldest_id },
+      { remoteJid: chatJid, fromMe: !!req.oldest_from_me, id: req.oldest_id },
       req.oldest_ts_ms,
     );
-    // The JID is not logged; only that a request went out.
-    logger.info({ count: req.count ?? 50 }, 'meminta riwayat lebih lama');
+    // Identifiers are not logged; only that a request went out and its shape.
+    logger.info(
+      { count: req.count ?? 50, addressedAs: chatJid.endsWith('@lid') ? 'lid' : 'pn' },
+      'meminta riwayat lebih lama',
+    );
   } catch (err) {
     logger.warn({ err: err.message }, 'gagal meminta riwayat lebih lama');
   }

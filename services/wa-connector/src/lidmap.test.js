@@ -66,6 +66,31 @@ test('LID yang belum dipetakan tetap ditolak', () => {
   assert.equal(m.phoneForKey({ remoteJid: '999888777666555@lid' }), null);
 });
 
+test('chatJidForPhone memakai LID bila WhatsApp mengenalnya begitu', () => {
+  const m = new LidMap();
+  m.note(PN, LID);
+
+  // Permintaan yang menyebut chat harus memakai bentuk yang dipakai server.
+  // Menyebut 628...@s.whatsapp.net untuk chat yang dilacak sebagai @lid tidak
+  // cocok dengan apa pun, dan gagal tanpa pesan error.
+  assert.equal(m.chatJidForPhone('6282258414330'), LID);
+});
+
+test('chatJidForPhone jatuh ke JID nomor bila tidak ada pemetaan', () => {
+  const m = new LidMap();
+  assert.equal(m.chatJidForPhone('6289999999999'), '6289999999999@s.whatsapp.net');
+});
+
+test('lidForPhone dan hasPhone konsisten', () => {
+  const m = new LidMap();
+  m.note(PN, LID);
+
+  assert.equal(m.lidForPhone('6282258414330'), '184610646409253');
+  assert.equal(m.hasPhone('6282258414330'), true);
+  assert.equal(m.lidForPhone('6289999999999'), null);
+  assert.equal(m.hasPhone('6289999999999'), false);
+});
+
 test('bertahan lewat serialisasi', () => {
   const m = new LidMap();
   m.note(PN, LID);
