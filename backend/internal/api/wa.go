@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
+	"strings"
+	"time"
 
 	"ditalk/backend/internal/storage"
 	"ditalk/backend/internal/waid"
@@ -98,6 +101,109 @@ func (s *Server) handleWAAvatar(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(data)
+}
+
+// contactRow is one line in the picker: a chat that exists on the device, an
+// already-registered number, or both.
+type contactRow struct {
+	Phone string `json:"phone"`
+	// Name from WhatsApp; empty when the contact is not saved on the phone.
+	Name string `json:"name,omitempty"`
+	// Label is the user's own note, which wins over the WhatsApp name.
+	Label         string     `json:"label,omitempty"`
+	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
+	Registered    bool       `json:"registered"`
+	IsActive      bool       `json:"is_active"`
+	// ContactID is the allowlist row id, present only when registered.
+	ContactID string `json:"contact_id,omitempty"`
+	// FromDevice marks rows discovered from WhatsApp rather than typed manually.
+	FromDevice bool `json:"from_device"`
+}
+
+// handleWAContacts merges the chats discovered on the device with the allowlist,
+// so the picker can show registration state inline instead of making the user
+// compare two separate lists.
+func (s *Server) handleWAContacts(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+
+	registered, err := s.db.ListAllowedContacts(r.Context(), userID)
+	if err != nil {
+		s.log.Printf("list allowlist: %v", err)
+		writeJSON(w, http.StatusInternalServerError, errBody("allowlist_unavailable"))
+		return
+	}
+
+	byPhone := make(map[string]*contactRow, len(registered))
+	rows := make([]*contactRow, 0, len(registered))
+
+	for _, c := range registered {
+		row := &contactRow{
+			Phone:      c.Phone,
+			Label:      c.Label,
+			Registered: true,
+			IsActive:   c.IsActive,
+			ContactID:  c.ID,
+		}
+		byPhone[c.Phone] = row
+		rows = append(rows, row)
+	}
+
+	for _, cand := range s.wa.Candidates() {
+		if existing, seen := byPhone[cand.Phone]; seen {
+			existing.Name = cand.Name
+			existing.LastMessageAt = cand.LastMessageAt
+			existing.FromDevice = true
+			continue
+		}
+
+		row := &contactRow{
+			Phone:         cand.Phone,
+			Name:          cand.Name,
+			LastMessageAt: cand.LastMessageAt,
+			FromDevice:    true,
+		}
+		byPhone[cand.Phone] = row
+		rows = append(rows, row)
+	}
+
+	// Registered first so the user's own choices stay at the top, then by recent
+	// activity, then by name so the order is stable between polls.
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if a.Registered != b.Registered {
+			return a.Registered
+		}
+		at, bt := a.LastMessageAt, b.LastMessageAt
+		switch {
+		case at != nil && bt != nil && !at.Equal(*bt):
+			return at.After(*bt)
+		case at != nil && bt == nil:
+			return true
+		case at == nil && bt != nil:
+			return false
+		}
+		return displayName(a) < displayName(b)
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"contacts": rows,
+		// False tells the UI to explain that the device list is not available yet
+		// rather than implying the user has no chats.
+		"device_list_available": len(s.wa.Candidates()) > 0,
+	})
+}
+
+func displayName(c *contactRow) string {
+	if c.Label != "" {
+		return strings.ToLower(c.Label)
+	}
+	if c.Name != "" {
+		return strings.ToLower(c.Name)
+	}
+	return c.Phone
 }
 
 // ---------------------------------------------------------------- allowlist API

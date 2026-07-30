@@ -1,6 +1,5 @@
-import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, PlugZap, Plus, ShieldCheck, Trash2, Unplug } from 'lucide-react'
+import { Loader2, PlugZap, ShieldCheck, Unplug } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -12,35 +11,19 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
 import { QRCanvas } from '@/components/qr-canvas'
 import { WAProfile } from '@/components/wa-profile'
+import { ContactPicker } from '@/components/contact-picker'
 import { PageContainer, PageHeader, PageSections } from '@/components/page-shell'
 import { ApiError } from '@/lib/api'
 import {
-  addContact,
-  deleteContact,
   getAllowlist,
   getWAStatus,
   logoutDevice,
-  rejectionLabels,
   requestPairing,
-  setContactActive,
   statusLabels,
-  type AllowedContact,
-  type Rejection,
   type WAStatus,
 } from '@/lib/wa'
 
@@ -210,12 +193,7 @@ export function PairingPage() {
             </CardContent>
           </Card>
 
-          <AllowlistCard
-            isPending={allowlist.isPending}
-            contacts={allowlist.data?.contacts ?? []}
-            rejections={allowlist.data?.rejections ?? []}
-            onChanged={invalidate}
-          />
+          <ContactPicker rejections={allowlist.data?.rejections ?? []} />
         </div>
       </PageSections>
     </PageContainer>
@@ -250,167 +228,5 @@ function ConnectorOffline() {
         Setelah hidup, QR muncul sendiri di sini.
       </p>
     </div>
-  )
-}
-
-function AllowlistCard({
-  isPending,
-  contacts,
-  rejections,
-  onChanged,
-}: {
-  isPending: boolean
-  contacts: AllowedContact[]
-  rejections: Rejection[]
-  onChanged: () => void
-}) {
-  const [phone, setPhone] = useState('')
-  const [label, setLabel] = useState('')
-
-  const add = useMutation({
-    mutationFn: () => addContact({ phone, label }),
-    onSuccess: (c) => {
-      toast.success(`+${c.phone} ditambahkan.`)
-      setPhone('')
-      setLabel('')
-      onChanged()
-    },
-    onError: (err) => toast.error(describeError(err)),
-  })
-
-  const toggle = useMutation({
-    mutationFn: ({ id, active }: { id: string; active: boolean }) =>
-      setContactActive(id, active),
-    onSuccess: onChanged,
-    onError: (err) => toast.error(describeError(err)),
-  })
-
-  const remove = useMutation({
-    mutationFn: (id: string) => deleteContact(id),
-    onSuccess: () => {
-      toast.success('Kontak dihapus dari daftar.')
-      onChanged()
-    },
-    onError: (err) => toast.error(describeError(err)),
-  })
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="font-heading">Nomor yang terdaftar</CardTitle>
-        <CardDescription>
-          Hanya percakapan dengan nomor ini yang diproses. Menghapus nomor
-          menghentikan pembacaan baru; riwayat yang sudah tersimpan dihapus terpisah
-          dari halaman Privasi.
-        </CardDescription>
-      </CardHeader>
-
-      <CardContent className="space-y-5">
-        <form
-          className="flex flex-wrap items-end gap-3"
-          onSubmit={(e) => {
-            e.preventDefault()
-            add.mutate()
-          }}
-        >
-          <div className="min-w-[180px] flex-1 space-y-1.5">
-            <Label htmlFor="phone">Nomor WhatsApp</Label>
-            <Input
-              id="phone"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="0812 3456 7890"
-              inputMode="tel"
-              autoComplete="off"
-            />
-          </div>
-          <div className="min-w-[140px] flex-1 space-y-1.5">
-            <Label htmlFor="label">Label (opsional)</Label>
-            <Input
-              id="label"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="mis. Kakak"
-              autoComplete="off"
-            />
-          </div>
-          <Button type="submit" disabled={add.isPending || phone.trim() === ''}>
-            {add.isPending ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-            Tambah
-          </Button>
-        </form>
-
-        <p className="text-xs text-muted-foreground">
-          Format lokal maupun internasional diterima: 0812…, +62 812…, dan 62812…
-          dianggap nomor yang sama.
-        </p>
-
-        {isPending ? (
-          <Skeleton className="h-24 w-full" />
-        ) : contacts.length === 0 ? (
-          <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-            Belum ada nomor terdaftar. Selama daftar kosong, tidak ada percakapan yang
-            diproses.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nomor</TableHead>
-                  <TableHead>Label</TableHead>
-                  <TableHead>Aktif</TableHead>
-                  <TableHead className="text-right">Aksi</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {contacts.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell className="font-mono text-sm">+{c.phone}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {c.label || '—'}
-                    </TableCell>
-                    <TableCell>
-                      <Switch
-                        checked={c.is_active}
-                        onCheckedChange={(active) => toggle.mutate({ id: c.id, active })}
-                        aria-label={`Aktifkan pembacaan untuk ${c.phone}`}
-                      />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => remove.mutate(c.id)}
-                        disabled={remove.isPending}
-                        aria-label={`Hapus ${c.phone}`}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-
-        {rejections.length > 0 && (
-          <div className="space-y-2 border-t pt-4">
-            <p className="text-sm font-medium">Yang dibuang oleh filter</p>
-            <p className="text-xs text-muted-foreground">
-              Hanya jumlah dan alasannya yang dicatat, bukan isi atau nomornya.
-            </p>
-            <div className="flex flex-wrap gap-2 pt-1">
-              {rejections.map((r) => (
-                <Badge key={r.reason} variant="secondary">
-                  {rejectionLabels[r.reason] ?? r.reason}: {r.count}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
   )
 }

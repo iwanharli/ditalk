@@ -89,6 +89,22 @@ type State struct {
 	allowlistVersion int64
 
 	connectorSeenAt time.Time
+
+	// candidates is the picker list reported by the connector: names, numbers,
+	// and last activity for chats that exist on the device.
+	//
+	// Held in memory only and never written to the database. These people have
+	// not been allowlisted, so the app has no basis to retain anything about
+	// them; the list exists purely so the owner can choose (doc bab 19.1).
+	candidates []Candidate
+}
+
+// Candidate is a chat the user may choose to analyze. It deliberately carries no
+// message content, preview, or media.
+type Candidate struct {
+	Phone         string     `json:"phone"`
+	Name          string     `json:"name"`
+	LastMessageAt *time.Time `json:"last_message_at"`
 }
 
 func NewState() *State {
@@ -176,12 +192,14 @@ func (s *State) SetStatus(status Status, detail string) {
 		s.qrSetAt = time.Time{}
 		s.lastError = ""
 	case StatusLoggedOut:
-		// Unlinking must not leave the account's name or picture behind.
+		// Unlinking must not leave the account's identity or the contact list of
+		// people who were never allowlisted behind.
 		s.qr = ""
 		s.qrSetAt = time.Time{}
 		s.selfPhone = ""
 		s.selfName = ""
 		s.avatar, s.avatarMime, s.avatarVersion = nil, "", ""
+		s.candidates = nil
 	case StatusDisconnected:
 		// A dropped socket usually reconnects to the same account, so identity is
 		// kept to avoid the profile flickering away and back.
@@ -222,6 +240,23 @@ func (s *State) SetAvatar(data []byte, mime string) {
 	s.avatarMime = mime
 	s.avatarVersion = hex.EncodeToString(sum[:8])
 	s.updatedAt = time.Now()
+}
+
+func (s *State) SetCandidates(list []Candidate) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.candidates = list
+	s.updatedAt = time.Now()
+}
+
+// Candidates returns a copy so callers cannot mutate shared state.
+func (s *State) Candidates() []Candidate {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make([]Candidate, len(s.candidates))
+	copy(out, s.candidates)
+	return out
 }
 
 // Avatar returns the stored picture. ok is false when none is available.

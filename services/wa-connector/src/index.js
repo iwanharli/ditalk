@@ -1,4 +1,5 @@
-import { rm } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import makeWASocket, {
   DisconnectReason,
   useMultiFileAuthState,
@@ -9,6 +10,7 @@ import { normalizeMessage } from './normalizer.js';
 import { publish, fetchCommands } from './publisher.js';
 import { Allowlist } from './allowlist.js';
 import { readOwnProfile } from './profile.js';
+import { ContactDirectory } from './contacts.js';
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
@@ -17,7 +19,11 @@ const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 const AUTH_DIR = process.env.AUTH_DIR ?? './.auth';
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 3000);
 
+// Kept beside the auth state so unlinking wipes both in one step.
+const DIRECTORY_FILE = join(dirname(AUTH_DIR), '.wa-chats.json');
+
 const allowlist = new Allowlist();
+const directory = new ContactDirectory();
 let sock = null;
 let stopping = false;
 let rejectedSinceLastLog = 0;
@@ -96,8 +102,16 @@ async function startSocket() {
     }
   });
 
-  sock.ev.on('messaging-history.set', ({ messages, isLatest }) => {
-    logger.info({ count: messages.length, isLatest }, 'history sync');
+  sock.ev.on('messaging-history.set', ({ chats, contacts, messages, isLatest }) => {
+    logger.info(
+      { messages: messages.length, chats: chats?.length ?? 0, isLatest },
+      'history sync',
+    );
+
+    // Metadata for the picker. Names and numbers only; see contacts.js.
+    for (const c of contacts ?? []) directory.noteContact(c);
+    for (const c of chats ?? []) directory.noteChat(c);
+
     for (const m of messages) {
       forwardIfAllowed('message.ingested', m.key?.remoteJid, () => normalizeMessage(m));
     }
@@ -138,8 +152,20 @@ async function startSocket() {
     }
   });
 
-  // chats.update and contacts.update are not forwarded: they cover every chat on
-  // the device, including ones outside the allowlist.
+  // chats.* and contacts.* feed the picker only. Their message content is never
+  // forwarded; the allowlist still governs everything that gets analyzed.
+  sock.ev.on('chats.upsert', (chats) => {
+    for (const c of chats) directory.noteChat(c);
+  });
+  sock.ev.on('chats.update', (chats) => {
+    for (const c of chats) directory.noteChat(c);
+  });
+  sock.ev.on('contacts.upsert', (contacts) => {
+    for (const c of contacts) directory.noteContact(c);
+  });
+  sock.ev.on('contacts.update', (contacts) => {
+    for (const c of contacts) directory.noteContact(c);
+  });
 }
 
 function restart() {
@@ -151,9 +177,34 @@ function restart() {
 async function clearAuth() {
   try {
     await rm(AUTH_DIR, { recursive: true, force: true });
-    logger.info('auth state dihapus');
+    // The chat directory describes people who were never allowlisted; unlinking
+    // must not leave it behind.
+    await rm(DIRECTORY_FILE, { force: true });
+    logger.info('auth state dan daftar chat dihapus');
   } catch (err) {
     logger.error({ err: err.message }, 'gagal menghapus auth state');
+  }
+}
+
+async function loadDirectory() {
+  try {
+    const raw = await readFile(DIRECTORY_FILE, 'utf8');
+    if (directory.loadFrom(JSON.parse(raw))) {
+      logger.info({ count: directory.size }, 'daftar chat dimuat dari cache');
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      logger.warn({ err: err.message }, 'cache daftar chat tidak terbaca');
+    }
+  }
+}
+
+async function saveDirectory() {
+  try {
+    await mkdir(dirname(DIRECTORY_FILE), { recursive: true });
+    await writeFile(DIRECTORY_FILE, JSON.stringify(directory.toJSON()), 'utf8');
+  } catch (err) {
+    logger.warn({ err: err.message }, 'gagal menyimpan daftar chat');
   }
 }
 
@@ -208,6 +259,14 @@ async function pollLoop() {
         rejectedSinceLastLog = 0;
       }
 
+      // Only publish when something changed; history sync produces long bursts.
+      if (directory.dirty) {
+        directory.dirty = false;
+        await publish('contacts.discovered', { contacts: directory.snapshot() });
+        await saveDirectory();
+        logger.info({ count: directory.size }, 'kandidat kontak dikirim');
+      }
+
       if (cmd.logout) await handleLogout();
       // Force a fresh socket even when one exists: a socket that is present but
       // stuck disconnected would otherwise never emit a new QR.
@@ -241,6 +300,11 @@ async function loadInitialAllowlist(attempts = 20, delayMs = 1000) {
 }
 
 async function main() {
+  await loadDirectory();
+  // Force a publish on the first poll so the dashboard has the cached list even
+  // when WhatsApp sends no history sync on this reconnect.
+  if (directory.size > 0) directory.dirty = true;
+
   if (!(await loadInitialAllowlist())) {
     logger.warn(
       'backend tidak dapat dihubungi; pesan akan dibuang sampai allowlist termuat',
