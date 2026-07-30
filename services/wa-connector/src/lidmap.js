@@ -41,12 +41,29 @@ export class LidMap {
     return this.byLid.size;
   }
 
+  /** The LID digits paired with a phone number, or null. */
+  lidForPhone(phone) {
+    for (const [lid, mapped] of this.byLid.entries()) {
+      if (mapped === phone) return lid;
+    }
+    return null;
+  }
+
   /** Whether a phone number already has a LID pairing. */
   hasPhone(phone) {
-    for (const mapped of this.byLid.values()) {
-      if (mapped === phone) return true;
-    }
-    return false;
+    return this.lidForPhone(phone) !== null;
+  }
+
+  /**
+   * The JID WhatsApp itself uses for a conversation with this number.
+   *
+   * Requests that name a chat — history on demand, for instance — must use the
+   * form WhatsApp knows it by. Asking about 628…@s.whatsapp.net for a chat the
+   * server tracks as …@lid simply matches nothing, with no error to show for it.
+   */
+  chatJidForPhone(phone) {
+    const lid = this.lidForPhone(phone);
+    return lid ? `${lid}@lid` : `${phone}@s.whatsapp.net`;
   }
 
   /** Records a pairing seen in history contacts. */
