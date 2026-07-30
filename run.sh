@@ -143,8 +143,17 @@ listener_pids() {
 for p in "$PORT" "$FRONTEND_PORT"; do
   held="$(listener_pids "$p")"
   if [ -n "$held" ]; then
-    fatal "Port $p sudah dipakai oleh PID $(echo "$held" | tr '\n' ' ')
-  Hentikan proses itu, atau ubah PORT / FRONTEND_PORT."
+    pids="$(echo "$held" | tr '\n' ' ')"
+    owner="$(ps -p "${held%%
+*}" -o comm= 2>/dev/null || true)"
+    # Naming the process and giving the exact command is the difference between
+    # a message the user can act on and one they have to research.
+    fatal "Port $p sudah dipakai oleh PID ${pids}(${owner:-tidak diketahui})
+
+  Hentikan:      kill ${pids}
+  Paksa:         kill -9 ${pids}
+  Atau jalankan di port lain:
+                 PORT=8081 FRONTEND_PORT=5174 ./run.sh"
   fi
 done
 
