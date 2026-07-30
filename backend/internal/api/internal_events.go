@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -19,7 +20,13 @@ type connectionPayload struct {
 	Status  string `json:"status"`
 	QR      string `json:"qr"`
 	SelfJID string `json:"self_jid"`
-	Detail  string `json:"detail"`
+	// SelfName is the account's own WhatsApp display name.
+	SelfName string `json:"self_name"`
+	// Avatar is base64 image bytes downloaded by the connector, so the browser
+	// never has to request anything from WhatsApp itself.
+	Avatar     string `json:"avatar"`
+	AvatarMime string `json:"avatar_mime"`
+	Detail     string `json:"detail"`
 }
 
 type messagePayload struct {
@@ -91,8 +98,40 @@ func (s *Server) applyConnectionEvent(ev internalEvent) {
 		}
 	}
 
+	if p.SelfName != "" {
+		s.wa.SetSelfName(p.SelfName)
+	}
+
+	if p.Avatar != "" {
+		data, err := base64.StdEncoding.DecodeString(p.Avatar)
+		if err != nil {
+			s.log.Printf("connection event: avatar bukan base64 valid")
+		} else if mime := sniffImageMIME(data); mime == "" {
+			// Refuse anything that is not a plain image; the bytes get served back
+			// to the browser, so an SVG or HTML payload here would be a scripting
+			// vector.
+			s.log.Printf("connection event: avatar bukan gambar yang didukung")
+		} else {
+			s.wa.SetAvatar(data, mime)
+		}
+	}
+
+	// Status is applied last: switching to logged_out clears identity, and doing
+	// that before the fields above would immediately discard them.
 	if p.Status != "" {
 		s.wa.SetStatus(wa.Status(p.Status), p.Detail)
+	}
+}
+
+// sniffImageMIME verifies the bytes really are a raster image, ignoring whatever
+// content type was declared. It returns "" when the format is not allowed.
+func sniffImageMIME(data []byte) string {
+	detected := http.DetectContentType(data)
+	switch detected {
+	case "image/jpeg", "image/png", "image/webp", "image/gif":
+		return detected
+	default:
+		return ""
 	}
 }
 

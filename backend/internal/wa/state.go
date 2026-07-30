@@ -6,6 +6,8 @@
 package wa
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"sync"
 	"time"
 )
@@ -37,7 +39,16 @@ type Snapshot struct {
 	QRExpiresAt *time.Time `json:"qr_expires_at,omitempty"`
 	// SelfPhone is the account that scanned the code, echoed back so the user can
 	// confirm they linked the intended number.
-	SelfPhone     string     `json:"self_phone,omitempty"`
+	SelfPhone string `json:"self_phone,omitempty"`
+	// SelfName is the account's own WhatsApp display name.
+	SelfName string `json:"self_name,omitempty"`
+	// HasAvatar tells the UI whether GET /wa/avatar will return an image. The
+	// bytes are not inlined here because the status endpoint is polled every few
+	// seconds and would re-send the picture each time.
+	HasAvatar bool `json:"has_avatar"`
+	// AvatarVersion changes whenever the picture does, so the browser can cache
+	// the image and still pick up a change.
+	AvatarVersion string     `json:"avatar_version,omitempty"`
 	LastConnected *time.Time `json:"last_connected_at,omitempty"`
 	LastError     string     `json:"last_error,omitempty"`
 	UpdatedAt     time.Time  `json:"updated_at"`
@@ -57,9 +68,17 @@ type State struct {
 	qr            string
 	qrSetAt       time.Time
 	selfPhone     string
+	selfName      string
 	lastConnected *time.Time
 	lastError     string
 	updatedAt     time.Time
+
+	// Avatar bytes live in memory only. A profile picture is personal data that
+	// the app does not need to retain, so it is discarded on logout and lost on
+	// restart rather than written to disk.
+	avatar        []byte
+	avatarMime    string
+	avatarVersion string
 
 	// Commands the connector picks up on its next poll. The backend cannot call
 	// into the connector, so control flows the same direction as events.
@@ -156,10 +175,18 @@ func (s *State) SetStatus(status Status, detail string) {
 		s.qr = ""
 		s.qrSetAt = time.Time{}
 		s.lastError = ""
-	case StatusLoggedOut, StatusDisconnected:
+	case StatusLoggedOut:
+		// Unlinking must not leave the account's name or picture behind.
 		s.qr = ""
 		s.qrSetAt = time.Time{}
 		s.selfPhone = ""
+		s.selfName = ""
+		s.avatar, s.avatarMime, s.avatarVersion = nil, "", ""
+	case StatusDisconnected:
+		// A dropped socket usually reconnects to the same account, so identity is
+		// kept to avoid the profile flickering away and back.
+		s.qr = ""
+		s.qrSetAt = time.Time{}
 	case StatusError:
 		s.lastError = detail
 	}
@@ -172,6 +199,42 @@ func (s *State) SetSelfPhone(phone string) {
 	s.updatedAt = time.Now()
 }
 
+func (s *State) SetSelfName(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.selfName = name
+	s.updatedAt = time.Now()
+}
+
+// SetAvatar stores the picture and derives a version from its content, so an
+// unchanged picture keeps the same cache key across reconnects.
+func (s *State) SetAvatar(data []byte, mime string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(data) == 0 {
+		s.avatar, s.avatarMime, s.avatarVersion = nil, "", ""
+		return
+	}
+
+	sum := sha256.Sum256(data)
+	s.avatar = data
+	s.avatarMime = mime
+	s.avatarVersion = hex.EncodeToString(sum[:8])
+	s.updatedAt = time.Now()
+}
+
+// Avatar returns the stored picture. ok is false when none is available.
+func (s *State) Avatar() (data []byte, mime, version string, ok bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(s.avatar) == 0 {
+		return nil, "", "", false
+	}
+	return s.avatar, s.avatarMime, s.avatarVersion, true
+}
+
 func (s *State) Snapshot() Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -179,6 +242,9 @@ func (s *State) Snapshot() Snapshot {
 	snap := Snapshot{
 		Status:        s.status,
 		SelfPhone:     s.selfPhone,
+		SelfName:      s.selfName,
+		HasAvatar:     len(s.avatar) > 0,
+		AvatarVersion: s.avatarVersion,
 		LastConnected: s.lastConnected,
 		LastError:     s.lastError,
 		UpdatedAt:     s.updatedAt,

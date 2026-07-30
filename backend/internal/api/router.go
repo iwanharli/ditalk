@@ -63,6 +63,7 @@ func (s *Server) Routes() http.Handler {
 	// Linked Device pairing and the allowlist that bounds what may be read.
 	mux.HandleFunc("POST /wa/pair", s.handleWAPair)
 	mux.HandleFunc("GET /wa/status", s.handleWAStatus)
+	mux.HandleFunc("GET /wa/avatar", s.handleWAAvatar)
 	mux.HandleFunc("DELETE /wa/session", s.handleWALogout)
 
 	mux.HandleFunc("GET /wa/allowlist", s.handleAllowlistList)

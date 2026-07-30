@@ -26,6 +26,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
 import { QRCanvas } from '@/components/qr-canvas'
+import { WAProfile } from '@/components/wa-profile'
 import { PageContainer, PageHeader, PageSections } from '@/components/page-shell'
 import { ApiError } from '@/lib/api'
 import {
@@ -119,7 +120,9 @@ export function PairingPage() {
           </AlertDescription>
         </Alert>
 
-        <div className="grid gap-6 md:grid-cols-[auto_1fr]">
+        {/* items-start keeps the status card at its natural height instead of
+            stretching to match the taller allowlist panel beside it. */}
+        <div className="grid items-start gap-6 md:grid-cols-[auto_1fr]">
           <Card className="md:w-[340px]">
             <CardHeader>
               <CardTitle className="flex items-center justify-between gap-2 font-heading">
@@ -141,8 +144,10 @@ export function PairingPage() {
                 )}
               </CardTitle>
               <CardDescription>
-                {connection?.self_phone
-                  ? `Tertaut ke +${connection.self_phone}`
+                {/* The number is not repeated here: the profile below already
+                    shows it, formatted. */}
+                {connection?.status === 'connected'
+                  ? 'Akun tertaut sebagai Linked Device.'
                   : 'Belum ada akun tertaut.'}
               </CardDescription>
             </CardHeader>
@@ -160,9 +165,10 @@ export function PairingPage() {
                   </ol>
                 </div>
               ) : connection?.status === 'connected' ? (
-                <p className="text-sm text-muted-foreground">
-                  Sudah tersambung. Tidak perlu memindai QR.
-                </p>
+                <WAProfile
+                  connection={connection}
+                  allowlistActive={status.data?.allowlist_active ?? 0}
+                />
               ) : connection && !connection.connector_online ? (
                 <ConnectorOffline />
               ) : (

@@ -70,6 +70,36 @@ func (s *Server) handleWAPair(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "pairing_requested"})
 }
 
+// handleWAAvatar serves the linked account's profile picture from memory.
+//
+// Proxying it here means the browser never contacts WhatsApp's CDN, and the bytes
+// are never written to disk.
+func (s *Server) handleWAAvatar(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireUser(w, r); !ok {
+		return
+	}
+
+	data, mime, version, ok := s.wa.Avatar()
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errBody("no_avatar"))
+		return
+	}
+
+	etag := `"` + version + `"`
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("ETag", etag)
+	// private: this is one person's own picture, never a shared cache entry.
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(data)
+}
+
 // ---------------------------------------------------------------- allowlist API
 
 func (s *Server) handleAllowlistList(w http.ResponseWriter, r *http.Request) {
