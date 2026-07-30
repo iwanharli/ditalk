@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"ditalk/backend/internal/wa"
 	"ditalk/backend/internal/waid"
@@ -67,6 +68,11 @@ func (s *Server) handleInternalEvents(w http.ResponseWriter, r *http.Request) {
 	switch ev.Event {
 	case "connection.qr", "connection.update":
 		s.applyConnectionEvent(ev)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+
+	case "contacts.discovered":
+		s.applyContactsEvent(ev)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
 
@@ -133,6 +139,44 @@ func sniffImageMIME(data []byte) string {
 	default:
 		return ""
 	}
+}
+
+type contactsPayload struct {
+	Contacts []struct {
+		Phone         string `json:"phone"`
+		Name          string `json:"name"`
+		LastMessageAt string `json:"last_message_at"`
+	} `json:"contacts"`
+}
+
+// applyContactsEvent stores the picker list in memory.
+//
+// These contacts are not allowlisted, so nothing about them is persisted. The
+// list only lets the owner see what exists in order to choose (doc bab 19.1).
+func (s *Server) applyContactsEvent(ev internalEvent) {
+	var p contactsPayload
+	if err := json.Unmarshal(ev.Payload, &p); err != nil {
+		s.log.Printf("contacts event: malformed payload")
+		return
+	}
+
+	out := make([]wa.Candidate, 0, len(p.Contacts))
+	for _, c := range p.Contacts {
+		phone, err := waid.NormalizePhone(c.Phone)
+		if err != nil {
+			continue
+		}
+
+		cand := wa.Candidate{Phone: phone, Name: strings.TrimSpace(c.Name)}
+		if c.LastMessageAt != "" {
+			if t, err := time.Parse(time.RFC3339, c.LastMessageAt); err == nil {
+				cand.LastMessageAt = &t
+			}
+		}
+		out = append(out, cand)
+	}
+
+	s.wa.SetCandidates(out)
 }
 
 func (s *Server) applyMessageEvent(w http.ResponseWriter, r *http.Request, ev internalEvent) {

@@ -67,6 +67,29 @@ export async function getAllowlist() {
   return allowlistResponseSchema.parse(await api.get('/wa/allowlist'))
 }
 
+/** One row in the picker: a chat found on the device, a registered number, or both. */
+export const contactRowSchema = z.object({
+  phone: z.string(),
+  name: z.string().optional().default(''),
+  label: z.string().optional().default(''),
+  last_message_at: z.string().nullish(),
+  registered: z.boolean(),
+  is_active: z.boolean(),
+  contact_id: z.string().optional().default(''),
+  from_device: z.boolean(),
+})
+
+export const contactsResponseSchema = z.object({
+  contacts: z.array(contactRowSchema),
+  device_list_available: z.boolean(),
+})
+
+export type ContactRow = z.infer<typeof contactRowSchema>
+
+export async function getContacts() {
+  return contactsResponseSchema.parse(await api.get('/wa/contacts'))
+}
+
 export async function addContact(input: {
   phone: string
   label?: string

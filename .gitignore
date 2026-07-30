@@ -11,9 +11,10 @@ build/
 backend/api
 backend/bin/
 
-# WhatsApp auth state — NEVER commit
+# WhatsApp auth state and the cached chat directory — NEVER commit
 .auth/
 services/wa-connector/.auth/
+.wa-chats.json
 *.session
 
 # Environment & secrets
