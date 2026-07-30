@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  CheckCircle2,
   ChevronDown,
   Loader2,
   Plus,
@@ -303,6 +304,8 @@ function ContactRowItem({
           {formatPhone(row.phone)}
           {last && <span className="ml-2 font-sans">· {last}</span>}
         </p>
+
+        {row.registered && <StorageLine row={row} />}
       </div>
 
       {row.registered ? (
@@ -340,6 +343,42 @@ function ContactRowItem({
  * linked. On a later reconnect it sends nothing, so "wait a moment" would be
  * wrong: without a re-pair or new message activity the list stays empty forever.
  */
+/**
+ * Shows how much of a selected chat is stored, and whether the engine is still
+ * walking its history backwards.
+ *
+ * Without this the app looks idle during a backfill that can take minutes, and
+ * "0 pesan" gives no hint whether that is a failure or simply not started.
+ */
+function StorageLine({ row }: { row: ContactRow }) {
+  if (row.stored === 0) {
+    return (
+      <p className="mt-0.5 text-xs text-muted-foreground">
+        Belum ada pesan tersimpan — menunggu aktivitas pertama di chat ini.
+      </p>
+    )
+  }
+
+  const bf = row.backfill
+  return (
+    <p className="mt-0.5 flex items-center gap-1.5 text-xs">
+      <span className="font-medium">{row.stored.toLocaleString('id-ID')} pesan</span>
+      {bf?.running && (
+        <span className="inline-flex items-center gap-1 text-muted-foreground">
+          <Loader2 className="size-3 animate-spin" />
+          mengambil riwayat lama
+        </span>
+      )}
+      {bf?.done && (
+        <span className="inline-flex items-center gap-1 text-primary">
+          <CheckCircle2 className="size-3" />
+          riwayat lengkap
+        </span>
+      )}
+    </p>
+  )
+}
+
 function EmptyState({ connected }: { connected: boolean }) {
   if (!connected) {
     return (

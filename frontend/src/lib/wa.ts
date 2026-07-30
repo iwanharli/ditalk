@@ -79,6 +79,14 @@ export const contactRowSchema = z.object({
   from_device: z.boolean(),
   // Set only for selected contacts, whose picture the connector fetches.
   avatar_version: z.string().optional().default(''),
+  stored: z.number().optional().default(0),
+  backfill: z
+    .object({
+      done: z.boolean(),
+      running: z.boolean(),
+      fetched: z.number(),
+    })
+    .nullish(),
 })
 
 export const contactsResponseSchema = z.object({

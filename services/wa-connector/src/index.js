@@ -359,6 +359,30 @@ async function saveDirectory() {
   }
 }
 
+/**
+ * Asks WhatsApp for messages older than the given anchor.
+ *
+ * The reply does not come back from this call. WhatsApp answers asynchronously
+ * with a history sync of type ON_DEMAND, which arrives through the normal
+ * messaging-history.set handler and is stored like any other message.
+ */
+async function requestOlderHistory(req) {
+  if (!socketOpen || !sock) return;
+  if (!req?.chat_jid || !req?.oldest_id) return;
+
+  try {
+    await sock.fetchMessageHistory(
+      req.count ?? 50,
+      { remoteJid: req.chat_jid, fromMe: !!req.oldest_from_me, id: req.oldest_id },
+      req.oldest_ts_ms,
+    );
+    // The JID is not logged; only that a request went out.
+    logger.info({ count: req.count ?? 50 }, 'meminta riwayat lebih lama');
+  } catch (err) {
+    logger.warn({ err: err.message }, 'gagal meminta riwayat lebih lama');
+  }
+}
+
 async function handlePairRequest() {
   logger.info('QR baru diminta dari dashboard');
 
@@ -459,6 +483,12 @@ async function pollLoop() {
             if (n > 0) logger.info({ count: n }, 'foto profil kontak dikirim');
           })
           .catch((err) => logger.warn({ err: err.message }, 'gagal mengambil foto kontak'));
+      }
+
+      // Backfill: ask WhatsApp for messages older than what is already stored.
+      // The backend decides which conversations still need it and when.
+      for (const req of cmd.backfill ?? []) {
+        await requestOlderHistory(req);
       }
 
       if (cmd.logout) await handleLogout();

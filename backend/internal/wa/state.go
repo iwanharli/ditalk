@@ -62,6 +62,10 @@ type Snapshot struct {
 }
 
 type State struct {
+	// Backfill tracks how far each conversation's history has been walked. It
+	// has its own lock because a backfill round outlives a status poll.
+	Backfill *Backfill
+
 	mu sync.RWMutex
 
 	status        Status
@@ -126,6 +130,7 @@ type Candidate struct {
 
 func NewState() *State {
 	return &State{
+		Backfill:       NewBackfill(),
 		status:         StatusDisconnected,
 		updatedAt:      time.Now(),
 		contactAvatars: map[string]avatar{},
