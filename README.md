@@ -101,7 +101,19 @@ presisi hanya boleh terisi bila `precise_opt_in` true (bab 16A.1).
 
 ## Menjalankan
 
-Pastikan PostgreSQL dan Redis aktif, lalu tiap baris di terminal terpisah:
+Cara termudah, backend + frontend sekaligus:
+
+```bash
+./run.sh              # backend :8080 + frontend :5173
+./run.sh --worker     # sekalian worker queue
+```
+
+Script memeriksa prasyarat lebih dulu (PostgreSQL, Redis, port bebas), memuat
+`.env` tanpa menimpa variabel yang sudah ada di environment, memberi prefix
+`[be]`/`[fe]` pada log, dan menghentikan semua proses beserta anaknya saat
+Ctrl-C. Override lewat env: `PORT=9000 FRONTEND_PORT=3000 ./run.sh`.
+
+Manual, bila ingin tiap service di terminal terpisah:
 
 ```bash
 cd backend && go run ./cmd/api      # :8080  API (migrasi jalan otomatis)
