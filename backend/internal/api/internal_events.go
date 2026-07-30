@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"ditalk/backend/internal/storage"
 	"ditalk/backend/internal/wa"
 	"ditalk/backend/internal/waid"
 )
@@ -208,9 +209,196 @@ func (s *Server) applyMessageEvent(w http.ResponseWriter, r *http.Request, ev in
 		return
 	}
 
-	// Persisting allowlisted messages is wired up with the live sync pipeline.
-	// Until then the filter decision is the meaningful result.
-	writeJSON(w, http.StatusOK, map[string]string{"status": "accepted"})
+	switch ev.Event {
+	case "message.ingested":
+		s.storeMessage(w, r, userID, ev)
+	case "message.updated":
+		s.applyMessageUpdate(w, r, userID, ev)
+	case "message.deleted":
+		s.applyMessageDelete(w, r, userID, p.ConversationID, ev)
+	case "message.reaction":
+		s.applyMessageReaction(w, r, userID, ev)
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ignored"})
+	}
+}
+
+// canonicalMessage is the object the connector's normalizer produces (doc 6.1).
+type canonicalMessage struct {
+	MessageID       string `json:"message_id"`
+	ConversationID  string `json:"conversation_id"`
+	SenderRole      string `json:"sender_role"`
+	Timestamp       string `json:"timestamp"`
+	MessageType     string `json:"message_type"`
+	Text            string `json:"text"`
+	QuotedMessageID string `json:"quoted_message_id"`
+	IsViewOnce      bool   `json:"is_view_once"`
+	IsEphemeral     bool   `json:"is_ephemeral"`
+}
+
+func (s *Server) storeMessage(w http.ResponseWriter, r *http.Request, userID string, ev internalEvent) {
+	var m canonicalMessage
+	if err := json.Unmarshal(ev.Payload, &m); err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody("invalid_payload"))
+		return
+	}
+
+	ts, err := time.Parse(time.RFC3339, m.Timestamp)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody("invalid_timestamp"))
+		return
+	}
+
+	outcome, err := s.db.SaveLiveMessage(r.Context(), s.cipher, userID, storage.LiveMessage{
+		MessageID:       m.MessageID,
+		ConversationID:  m.ConversationID,
+		SenderRole:      m.SenderRole,
+		Timestamp:       ts,
+		MessageType:     m.MessageType,
+		Text:            m.Text,
+		QuotedMessageID: m.QuotedMessageID,
+		IsViewOnce:      m.IsViewOnce,
+		IsEphemeral:     m.IsEphemeral,
+	})
+	if err != nil {
+		// The error is logged without the message body; content must never reach
+		// logs (doc bab 24.2).
+		s.log.Printf("save live message: %v", err)
+		writeJSON(w, http.StatusInternalServerError, errBody("save_failed"))
+		return
+	}
+
+	if outcome == storage.SaveSkipped {
+		s.db.RecordRejection(r.Context(), userID, "view_once")
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": string(outcome)})
+}
+
+type updatePayload struct {
+	ConversationID string `json:"conversation_id"`
+	MessageID      string `json:"message_id"`
+	Update         struct {
+		// Present when the message was edited; absent for receipt-only updates.
+		Message *struct {
+			Conversation    string `json:"conversation"`
+			ExtendedTextMsg *struct {
+				Text string `json:"text"`
+			} `json:"extendedTextMessage"`
+		} `json:"message"`
+		// Baileys reports a revoke as an update on some platforms.
+		MessageStubType int `json:"messageStubType"`
+	} `json:"update"`
+}
+
+func (s *Server) applyMessageUpdate(w http.ResponseWriter, r *http.Request, userID string, ev internalEvent) {
+	var p updatePayload
+	if err := json.Unmarshal(ev.Payload, &p); err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody("invalid_payload"))
+		return
+	}
+
+	// Most updates are delivery and read receipts, which carry no analysable
+	// signal and would otherwise rewrite edited_at on every ack.
+	if p.Update.Message == nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ignored"})
+		return
+	}
+
+	newText := p.Update.Message.Conversation
+	if newText == "" && p.Update.Message.ExtendedTextMsg != nil {
+		newText = p.Update.Message.ExtendedTextMsg.Text
+	}
+
+	found, err := s.db.MarkMessageEdited(
+		r.Context(), s.cipher, userID, p.ConversationID, p.MessageID, newText,
+	)
+	if err != nil {
+		s.log.Printf("mark edited: %v", err)
+		writeJSON(w, http.StatusInternalServerError, errBody("update_failed"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": outcomeLabel(found, "edited")})
+}
+
+type deletePayload struct {
+	ConversationID string `json:"conversation_id"`
+	Keys           []struct {
+		ID        string `json:"id"`
+		RemoteJID string `json:"remoteJid"`
+	} `json:"keys"`
+}
+
+func (s *Server) applyMessageDelete(
+	w http.ResponseWriter, r *http.Request, userID, jid string, ev internalEvent,
+) {
+	var p deletePayload
+	if err := json.Unmarshal(ev.Payload, &p); err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody("invalid_payload"))
+		return
+	}
+
+	marked := 0
+	for _, k := range p.Keys {
+		target := k.RemoteJID
+		if target == "" {
+			target = jid
+		}
+		found, err := s.db.MarkMessageDeleted(r.Context(), s.cipher, userID, target, k.ID)
+		if err != nil {
+			s.log.Printf("mark deleted: %v", err)
+			continue
+		}
+		if found {
+			marked++
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"status": "deleted", "marked": marked})
+}
+
+type reactionPayload struct {
+	ConversationID string `json:"conversation_id"`
+	MessageID      string `json:"message_id"`
+	Reaction       struct {
+		Text string `json:"text"`
+		Key  struct {
+			FromMe bool `json:"fromMe"`
+		} `json:"key"`
+	} `json:"reaction"`
+}
+
+func (s *Server) applyMessageReaction(w http.ResponseWriter, r *http.Request, userID string, ev internalEvent) {
+	var p reactionPayload
+	if err := json.Unmarshal(ev.Payload, &p); err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody("invalid_payload"))
+		return
+	}
+
+	role := "OTHER"
+	if p.Reaction.Key.FromMe {
+		role = "SELF"
+	}
+
+	// An empty text means the person removed their reaction.
+	found, err := s.db.ApplyReaction(
+		r.Context(), s.cipher, userID, p.ConversationID, p.MessageID, p.Reaction.Text, role,
+	)
+	if err != nil {
+		s.log.Printf("apply reaction: %v", err)
+		writeJSON(w, http.StatusInternalServerError, errBody("reaction_failed"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": outcomeLabel(found, "reacted")})
+}
+
+// outcomeLabel distinguishes "applied" from "the message is not stored here",
+// which happens when an event arrives for a chat added to the allowlist later.
+func outcomeLabel(found bool, applied string) string {
+	if found {
+		return applied
+	}
+	return "message_not_found"
 }
 
 // handleInternalCommands lets the connector poll for instructions and the

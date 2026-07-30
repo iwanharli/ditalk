@@ -71,6 +71,42 @@ sudah tersimpan adalah tindakan terpisah di halaman Privasi.
 `INTERNAL_TOKEN` wajib diisi. Tanpa itu endpoint event akan menerima pesan
 palsu dari apa pun yang bisa menjangkau port tersebut.
 
+### Penyimpanan pesan live
+
+Pesan dari kontak yang dipilih disimpan terenkripsi ke `conversations` dan
+`messages`, idempoten pada `(conversation_id, wa_message_id)` — WhatsApp
+mengirim ulang pesan saat reconnect, jadi pengulangan tidak menggandakan baris.
+
+Sesi dibentuk secara inkremental: pesan memperpanjang sesi terdekat dalam jendela
+30 menit pada hari yang sama, atau membuka sesi baru. History sync mengirim pesan
+tidak berurutan, jadi pencarian memakai jendela di sekitar setiap sesi, bukan
+hanya sesi terakhir. `RecomputeSessions` membangun ulang seluruh sesi dari
+timestamp saja bila diperlukan — sesi adalah data turunan, jadi tidak perlu
+mendekripsi apa pun.
+
+**View-once tidak disimpan.** Pengirim memilih pesan yang menghilang; menyimpannya
+berarti membatalkan pilihan itu (Ringkasan Eksekutif dan bab 7). Kejadiannya
+dihitung di `ingest_rejections` dengan alasan `view_once`.
+
+Pesan yang dihapus untuk semua orang tetap menyisakan barisnya dengan
+`is_deleted = true` dan teksnya dikosongkan, supaya analisis yang sudah mengutip
+pesan itu masih punya sasaran. Reaksi memakai satu slot per orang, bukan daftar
+yang terus bertambah.
+
+Impor dan live sync bertemu di satu percakapan yang sama bila `chat_key` pada
+impor berupa nomor telepon, karena keduanya memakai hash nomor ternormalisasi.
+
+Test integrasi penyimpanan memerlukan PostgreSQL sungguhan:
+
+```bash
+createdb db_ditalk_test
+cd backend
+GOOSE_DBSTRING="postgres://localhost:5432/db_ditalk_test?sslmode=disable" make migrate-up
+DITALK_TEST_DSN="postgres://localhost:5432/db_ditalk_test?sslmode=disable" go test ./internal/storage/
+```
+
+Tanpa `DITALK_TEST_DSN` test itu dilewati, bukan gagal.
+
 ## Import Export Chat
 
 Jalur ingestion pertama, tanpa menyentuh API tidak resmi (bab 30, Keputusan 1).

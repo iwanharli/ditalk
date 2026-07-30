@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"ditalk/backend/internal/crypto"
+	"ditalk/backend/internal/waid"
 	"ditalk/backend/internal/waimport"
 )
 
@@ -46,6 +47,13 @@ func (db *DB) ImportExport(
 		return nil, fmt.Errorf("encrypt display name: %w", err)
 	}
 
+	// When chat_key is a phone number, hash the normalized form so an import and
+	// live sync of the same person land on one conversation instead of two.
+	hashKey := chatKey
+	if phone, err := waid.NormalizePhone(chatKey); err == nil {
+		hashKey = phone
+	}
+
 	// alias is deliberately left unset. Doc bab 6.2 says the display name is
 	// stored encrypted OR replaced by an alias; writing the real name into a
 	// plaintext alias column as well would defeat the encryption. The user
@@ -58,7 +66,7 @@ func (db *DB) ImportExport(
 		  SET display_name_cipher = EXCLUDED.display_name_cipher,
 		      updated_at = now()
 		RETURNING id`,
-		userID, c.Hash(chatKey), nameCipher,
+		userID, c.Hash(hashKey), nameCipher,
 	).Scan(&conversationID)
 	if err != nil {
 		return nil, fmt.Errorf("upsert conversation: %w", err)
