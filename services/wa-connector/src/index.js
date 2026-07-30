@@ -113,6 +113,7 @@ async function startSocket() {
     for (const c of chats ?? []) directory.noteChat(c);
 
     for (const m of messages) {
+      directory.noteMessageActivity(m);
       forwardIfAllowed('message.ingested', m.key?.remoteJid, () => normalizeMessage(m));
     }
   });
@@ -120,6 +121,10 @@ async function startSocket() {
   // messages.upsert delivers an ARRAY; every element must be processed (doc 5.2).
   sock.ev.on('messages.upsert', ({ messages }) => {
     for (const m of messages) {
+      // Note the conversation before the allowlist check: a dropped message
+      // still proves the chat exists, which is what the picker needs. Only the
+      // JID, timestamp, and pushName are taken — never the content.
+      directory.noteMessageActivity(m);
       forwardIfAllowed('message.ingested', m.key?.remoteJid, () => normalizeMessage(m));
     }
   });

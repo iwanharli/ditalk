@@ -82,6 +82,33 @@ export class ContactDirectory {
     }
   }
 
+  /**
+   * Records a conversation from a message.
+   *
+   * The existence of a message for a JID is the most reliable evidence that a
+   * conversation exists: WhatsApp sends the full history sync only once per
+   * pairing, and offline message delivery arrives through messages.upsert without
+   * a matching chats.* event, which left the picker empty.
+   *
+   * Only the JID, timestamp, and pushName are read. Message content is never
+   * touched here, and the allowlist still decides what gets analyzed.
+   */
+  noteMessageActivity(msg) {
+    const phone = phoneFromJid(msg?.key?.remoteJid);
+    if (!phone) return;
+
+    const ts = Number(msg.messageTimestamp ?? 0);
+    // pushName is the sender's own display name, so it only names the other
+    // party on incoming messages.
+    const name = msg.key?.fromMe ? '' : msg.pushName?.trim() || '';
+
+    this.noteChat({
+      id: msg.key.remoteJid,
+      name,
+      conversationTimestamp: Number.isFinite(ts) && ts > 0 ? ts : 0,
+    });
+  }
+
   get size() {
     return this.chats.size;
   }
