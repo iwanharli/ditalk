@@ -13,6 +13,7 @@ import (
 	"ditalk/backend/internal/crypto"
 	"ditalk/backend/internal/queue"
 	"ditalk/backend/internal/storage"
+	"ditalk/backend/internal/wa"
 )
 
 type Server struct {
@@ -21,6 +22,7 @@ type Server struct {
 	queue    *queue.Client
 	ai       *ai.Client
 	cipher   *crypto.Cipher
+	wa       *wa.State
 	log      *log.Logger
 	validate *validator.Validate
 }
@@ -34,6 +36,7 @@ func NewServer(
 	q *queue.Client,
 	aiClient *ai.Client,
 	cipher *crypto.Cipher,
+	waState *wa.State,
 	logger *log.Logger,
 ) *Server {
 	return &Server{
@@ -42,6 +45,7 @@ func NewServer(
 		queue:    q,
 		ai:       aiClient,
 		cipher:   cipher,
+		wa:       waState,
 		log:      logger,
 		validate: validator.New(validator.WithRequiredStructEnabled()),
 	}
@@ -55,9 +59,16 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /health", s.handleHealth)
 
 	mux.HandleFunc("POST /auth/login", notImplemented)
-	mux.HandleFunc("POST /wa/pair", notImplemented)
-	mux.HandleFunc("GET /wa/status", notImplemented)
-	mux.HandleFunc("DELETE /wa/session", notImplemented)
+
+	// Linked Device pairing and the allowlist that bounds what may be read.
+	mux.HandleFunc("POST /wa/pair", s.handleWAPair)
+	mux.HandleFunc("GET /wa/status", s.handleWAStatus)
+	mux.HandleFunc("DELETE /wa/session", s.handleWALogout)
+
+	mux.HandleFunc("GET /wa/allowlist", s.handleAllowlistList)
+	mux.HandleFunc("POST /wa/allowlist", s.handleAllowlistAdd)
+	mux.HandleFunc("PATCH /wa/allowlist/{id}", s.handleAllowlistSetActive)
+	mux.HandleFunc("DELETE /wa/allowlist/{id}", s.handleAllowlistDelete)
 
 	// Import Export Chat is the first ingestion path: no unofficial API, and the
 	// dataset stays under the user's control (doc bab 30, Keputusan 1).
@@ -84,8 +95,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /commitments/{id}", notImplemented)
 	mux.HandleFunc("POST /exports", notImplemented)
 
-	// Internal ingestion endpoint used by the Node/Baileys connector.
-	mux.HandleFunc("POST /internal/events", notImplemented)
+	// Internal endpoints for the Node/Baileys connector. Both require the shared
+	// token; they are not reachable from the browser.
+	mux.HandleFunc("POST /internal/events", s.handleInternalEvents)
+	mux.HandleFunc("GET /internal/commands", s.handleInternalCommands)
 
 	c := cors.New(cors.Options{
 		AllowedOrigins:   s.cfg.AllowOrigins,

@@ -21,9 +21,9 @@ type Config struct {
 
 	// Model routing per doc bab 23A. Tier 1 handles bulk volume, tier 3 only
 	// escalations, so the expensive model never sees every message.
-	ModelTier1 string
-	ModelTier2 string
-	ModelTier3 string
+	ModelTier1             string
+	ModelTier2             string
+	ModelTier3             string
 	ModelTranscribeDefault string
 	ModelTranscribeHQ      string
 	EmbeddingModel         string
@@ -32,6 +32,9 @@ type Config struct {
 	// Must come from KMS/Vault in production, never stored beside the database.
 	EncryptionKey string
 	JWTSecret     string
+	// Shared secret between the Node connector and this API. Without it the
+	// event endpoint would accept fabricated messages from anything on the host.
+	InternalToken string
 }
 
 // Load reads .env if present, then environment variables take precedence.
@@ -59,6 +62,7 @@ func Load() Config {
 
 		EncryptionKey: os.Getenv("ENCRYPTION_KEY"),
 		JWTSecret:     os.Getenv("JWT_SECRET"),
+		InternalToken: os.Getenv("INTERNAL_TOKEN"),
 	}
 }
 
