@@ -18,6 +18,10 @@ export const connectionSchema = z.object({
   last_connected_at: z.string().nullish(),
   last_error: z.string().optional(),
   updated_at: z.string(),
+  // Only the connector can generate a QR, so the UI must be able to say
+  // "connector is not running" instead of the ambiguous "not connected".
+  connector_online: z.boolean(),
+  connector_last_seen: z.string().nullish(),
 })
 
 export const waStatusResponseSchema = z.object({

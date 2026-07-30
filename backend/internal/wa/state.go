@@ -25,6 +25,10 @@ const (
 // failed scan, so it is withheld once expired.
 const qrTTL = 60 * time.Second
 
+// connectorTTL is how long after its last poll the connector is still considered
+// alive. It polls every 3s by default, so this tolerates a few missed ticks.
+const connectorTTL = 15 * time.Second
+
 type Snapshot struct {
 	Status Status `json:"status"`
 	// QR is the raw pairing payload. The frontend renders it as an image; the
@@ -37,6 +41,13 @@ type Snapshot struct {
 	LastConnected *time.Time `json:"last_connected_at,omitempty"`
 	LastError     string     `json:"last_error,omitempty"`
 	UpdatedAt     time.Time  `json:"updated_at"`
+
+	// ConnectorOnline distinguishes "the connector process is not running" from
+	// "WhatsApp is not linked". Only the connector can produce a QR, so without
+	// this the UI would show "not connected" and leave the user waiting for a
+	// code that nothing is generating.
+	ConnectorOnline   bool       `json:"connector_online"`
+	ConnectorLastSeen *time.Time `json:"connector_last_seen,omitempty"`
 }
 
 type State struct {
@@ -57,6 +68,8 @@ type State struct {
 	// allowlistVersion increments on every allowlist change so the connector can
 	// refresh its filter without polling the full list each time.
 	allowlistVersion int64
+
+	connectorSeenAt time.Time
 }
 
 func NewState() *State {
@@ -94,10 +107,12 @@ func (s *State) BumpAllowlistVersion() {
 }
 
 // TakeCommand returns pending instructions and clears the one-shot flags, so a
-// logout is acted on exactly once.
+// logout is acted on exactly once. Polling doubles as the connector's heartbeat.
 func (s *State) TakeCommand() Command {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	s.connectorSeenAt = time.Now()
 
 	cmd := Command{
 		Logout:           s.logoutRequested,
@@ -173,6 +188,12 @@ func (s *State) Snapshot() Snapshot {
 		expires := s.qrSetAt.Add(qrTTL)
 		snap.QR = s.qr
 		snap.QRExpiresAt = &expires
+	}
+
+	if !s.connectorSeenAt.IsZero() {
+		seen := s.connectorSeenAt
+		snap.ConnectorLastSeen = &seen
+		snap.ConnectorOnline = time.Since(seen) < connectorTTL
 	}
 	return snap
 }

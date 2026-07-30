@@ -52,8 +52,17 @@ func (s *Server) handleWALogout(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleWAPair asks the connector to (re)start pairing so a fresh QR is emitted.
+//
+// Only the connector can produce a QR. If it is not running the request cannot be
+// honoured, and reporting success would leave the user waiting for a code that
+// nothing is generating.
 func (s *Server) handleWAPair(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireUser(w, r); !ok {
+		return
+	}
+
+	if !s.wa.Snapshot().ConnectorOnline {
+		writeJSON(w, http.StatusServiceUnavailable, errBody("connector_offline"))
 		return
 	}
 

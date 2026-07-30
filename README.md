@@ -39,8 +39,15 @@ cp .env.example .env    # lalu isi OPENAI_API_KEY, ENCRYPTION_KEY, JWT_SECRET
 
 ## Sambungkan WhatsApp (Linked Device)
 
-Buka `http://localhost:5173/pairing`, jalankan connector, lalu pindai QR dengan
+Jalankan `./run.sh`, buka `http://localhost:5173/pairing`, lalu pindai QR dengan
 WhatsApp di ponsel (Perangkat Tertaut → Tautkan perangkat).
+
+**QR dibuat oleh connector, bukan oleh backend.** `./run.sh` menjalankan
+connector secara default; tanpa proses itu tidak ada yang bisa menghasilkan QR.
+Bila connector mati, dashboard mengatakannya secara eksplisit dan tombol "Minta
+QR baru" dinonaktifkan, bukan melaporkan sukses palsu.
+
+Untuk menjalankan connector sendiri:
 
 ```bash
 cd services/wa-connector && npm run dev
@@ -131,8 +138,9 @@ presisi hanya boleh terisi bila `precise_opt_in` true (bab 16A.1).
 Cara termudah, backend + frontend sekaligus:
 
 ```bash
-./run.sh              # backend :8080 + frontend :5173
-./run.sh --worker     # sekalian worker queue
+./run.sh                 # backend :8080 + frontend :5173 + connector WhatsApp
+./run.sh --worker        # sekalian worker queue
+./run.sh --no-connector  # tanpa connector WhatsApp
 ```
 
 Script memeriksa prasyarat lebih dulu (PostgreSQL, Redis, port bebas), memuat
