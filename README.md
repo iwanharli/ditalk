@@ -37,6 +37,33 @@ Semua jalan native di host, tanpa container.
 cp .env.example .env    # lalu isi OPENAI_API_KEY, ENCRYPTION_KEY, JWT_SECRET
 ```
 
+## Sambungkan WhatsApp (Linked Device)
+
+Buka `http://localhost:5173/pairing`, jalankan connector, lalu pindai QR dengan
+WhatsApp di ponsel (Perangkat Tertaut → Tautkan perangkat).
+
+```bash
+cd services/wa-connector && npm run dev
+```
+
+**Hanya nomor yang Anda daftarkan yang dibaca.** Percakapan dari nomor di luar
+daftar dibuang, dan **grup selalu ditolak** tanpa kecuali — grup berisi pihak
+ketiga yang tidak pernah memberi persetujuan (bab 19.1). Filter berjalan di dua
+tempat: di connector, sehingga isi pesan yang tidak berhak tidak pernah keluar
+dari proses itu, dan diperiksa ulang di backend. Keduanya *fail closed* — apa pun
+yang tidak positif cocok dengan kontak aktif akan ditolak, termasuk saat
+allowlist belum termuat.
+
+Format lokal dan internasional dianggap nomor yang sama: `0812…`, `+62 812…`,
+dan `62812…` semuanya ternormalisasi ke `6281234567890`.
+
+Menjeda kontak (`is_active=false`) menghentikan pembacaan tanpa kehilangan
+konfigurasi. Menghapus nomor menghentikan pembacaan baru; menghapus riwayat yang
+sudah tersimpan adalah tindakan terpisah di halaman Privasi.
+
+`INTERNAL_TOKEN` wajib diisi. Tanpa itu endpoint event akan menerima pesan
+palsu dari apa pun yang bisa menjangkau port tersebut.
+
 ## Import Export Chat
 
 Jalur ingestion pertama, tanpa menyentuh API tidak resmi (bab 30, Keputusan 1).

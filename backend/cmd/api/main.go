@@ -16,6 +16,7 @@ import (
 	"ditalk/backend/internal/crypto"
 	"ditalk/backend/internal/queue"
 	"ditalk/backend/internal/storage"
+	"ditalk/backend/internal/wa"
 )
 
 func main() {
@@ -43,11 +44,16 @@ func main() {
 		cipher = nil
 	}
 
+	if cfg.InternalToken == "" {
+		log.Printf("WARNING: INTERNAL_TOKEN kosong; connector tidak dapat mengirim event")
+	}
+
 	logger := log.New(os.Stderr, "", log.LstdFlags)
+	waState := wa.NewState()
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           api.NewServer(cfg, db, q, ai.NewClient(cfg), cipher, logger).Routes(),
+		Handler:           api.NewServer(cfg, db, q, ai.NewClient(cfg), cipher, waState, logger).Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

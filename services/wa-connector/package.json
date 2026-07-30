@@ -6,7 +6,8 @@
   "description": "Read-only WhatsApp Linked Device connector (Baileys) for ditalk",
   "scripts": {
     "dev": "node --watch src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test": "node --test src/*.test.js"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
