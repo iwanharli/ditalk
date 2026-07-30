@@ -332,7 +332,26 @@ saja tidak melepas tautan di ponsel.
 
 Baileys menyediakan banyak hal yang bertentangan dengan tujuan read-only ditalk:
 
-- `sendMessage`, `relayMessage` — mengirim pesan
+- `sendMessage` — mengirim pesan ke orang lain
+- `relayMessage` ke JID orang lain — sama
+
+**Pengecualian yang perlu diketahui:** `fetchMessageHistory` **bukan** query
+pasif. Di balik layar ia memanggil `relayMessage` ke JID akun sendiri
+(`messages-send.js:211`):
+
+```js
+const msgId = await relayMessage(meJid, protocolMessage, {
+    additionalAttributes: { category: 'peer', push_priority: 'high_force' }
+});
+```
+
+Yang dikirim adalah pesan protokol bertipe `PEER_DATA_OPERATION_REQUEST_MESSAGE`
+kepada perangkat sendiri, bukan pesan chat ke lawan bicara. Lawan bicara tidak
+melihat apa pun, dan tidak ada isi percakapan yang keluar.
+
+Tetap saja ini operasi tulis di level protokol, jadi ditalk tidak lagi
+sepenuhnya bebas-kirim ketika backfill dipakai. Jawabannya juga dilayani oleh
+ponsel utama, sehingga ponsel harus daring agar riwayat dikirim.
 - `readMessages`, `sendReceipt('read')` — centang biru
 - `sendPresenceUpdate('available' \| 'composing')` — online dan typing
 - `presenceSubscribe` — memantau status online orang lain
