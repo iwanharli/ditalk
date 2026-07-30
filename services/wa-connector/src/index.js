@@ -8,6 +8,7 @@ import pino from 'pino';
 import { normalizeMessage } from './normalizer.js';
 import { publish, fetchCommands } from './publisher.js';
 import { Allowlist } from './allowlist.js';
+import { readOwnProfile } from './profile.js';
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
@@ -68,7 +69,15 @@ async function startSocket() {
     if (connection === 'open') {
       const selfJid = sock.user?.id ?? '';
       logger.info('tersambung ke WhatsApp');
-      await reportConnection({ status: 'connected', self_jid: selfJid });
+
+      const profile = await readOwnProfile(sock);
+      await reportConnection({
+        status: 'connected',
+        self_jid: selfJid,
+        self_name: profile.name,
+        avatar: profile.avatar,
+        avatar_mime: profile.avatarMime,
+      });
     }
 
     if (connection === 'close') {
