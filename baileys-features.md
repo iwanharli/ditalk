@@ -285,6 +285,33 @@ di `waid.PhoneFromJID` dan di `allowlist.js`.
 
 Helper: `jidNormalizedUser`, `jidDecode`, `isJidUser`, `isJidGroup`.
 
+### Memetakan LID ke nomor
+
+Tiga sumber, dengan cakupan berbeda:
+
+| Sumber | Cakupan | Catatan |
+| --- | --- | --- |
+| `contacts.upsert` dari app-state | Hanya kontak tersimpan | Membawa `lidJid`. Perlu snapshot penuh; lihat bagian app-state di bawah |
+| `key.senderPn` pada pesan **masuk** | Chat mana pun | Tidak berlaku untuk pesan keluar: di situ `senderPn` adalah nomor kita sendiri |
+| `sock.onWhatsApp('+62...')` | Nomor mana pun | Menerima nomor, mengembalikan `{ jid, exists, lid }` |
+
+Yang ketiga menutup celah yang tidak bisa ditutup dua lainnya: chat dengan nomor
+**tidak tersimpan** yang pesan terakhirnya kita kirim sendiri. Tanpa itu, seluruh
+pesan di chat tersebut dibuang sebagai `unsupported_jid`.
+
+ditalk memakainya hanya untuk nomor yang dipilih pengguna, jadi tetap segelintir
+pencarian, bukan penyisiran buku alamat.
+
+**App-state bersifat inkremental.** `resyncAppState` melanjutkan dari versi
+tersimpan, dan `return_snapshot` hanya `true` ketika versi itu nol
+(`chats.js:385`). Buku alamat yang tidak berubah karena itu tidak mengirim apa
+pun. Untuk membacanya lagi, versi tersimpan harus dikosongkan lebih dulu:
+
+```js
+await state.keys.set({ 'app-state-sync-version': { critical_unblock_low: null } })
+await sock.resyncAppState(['critical_unblock_low'], true)
+```
+
 ---
 
 ## 7. Auth state
@@ -314,7 +341,6 @@ Baileys menyediakan banyak hal yang bertentangan dengan tujuan read-only ditalk:
 - `updateProfilePicture`, `updateProfileName`, `updateProfileStatus` — mengubah
   profil
 - `updateBlockStatus` — blokir
-- `onWhatsApp` — memeriksa apakah nomor terdaftar; tidak diperlukan
 - `updateReadReceiptsPrivacy`, `updateOnlinePrivacy`, `updateLastSeenPrivacy` —
   mengubah pengaturan privasi akun; **jangan**, ini mengubah setelan akun
   pengguna dari luar
