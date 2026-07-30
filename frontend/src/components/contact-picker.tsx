@@ -15,7 +15,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { id as idLocale } from 'date-fns/locale'
 import { toast } from 'sonner'
 
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -266,6 +266,14 @@ function ContactRowItem({
       )}
     >
       <Avatar className="size-9 shrink-0">
+        {/* Pictures exist only for selected contacts; everything else keeps
+            initials. See the connector's avatars.js for why. */}
+        {row.avatar_version && (
+          <AvatarImage
+            src={`/api/wa/contacts/${row.phone}/avatar?v=${row.avatar_version}`}
+            alt={`Foto profil ${title || row.phone}`}
+          />
+        )}
         <AvatarFallback
           className={cn(
             'text-xs font-medium',

@@ -67,6 +67,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /wa/session", s.handleWALogout)
 
 	mux.HandleFunc("GET /wa/contacts", s.handleWAContacts)
+	mux.HandleFunc("GET /wa/contacts/{phone}/avatar", s.handleContactAvatar)
 	mux.HandleFunc("GET /wa/allowlist", s.handleAllowlistList)
 	mux.HandleFunc("POST /wa/allowlist", s.handleAllowlistAdd)
 	mux.HandleFunc("PATCH /wa/allowlist/{id}", s.handleAllowlistSetActive)

@@ -87,7 +87,34 @@ func (s *Server) handleWAAvatar(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, errBody("no_avatar"))
 		return
 	}
+	serveImage(w, r, data, mime, version)
+}
 
+// handleContactAvatar serves a selected contact's profile picture. Pictures exist
+// only for allowlisted contacts; see the connector's avatars.js for why they are
+// not fetched for every discovered chat.
+func (s *Server) handleContactAvatar(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireUser(w, r); !ok {
+		return
+	}
+
+	phone, err := waid.NormalizePhone(r.PathValue("phone"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody("invalid_phone"))
+		return
+	}
+
+	data, mime, version, ok := s.wa.ContactAvatar(phone)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errBody("no_avatar"))
+		return
+	}
+	serveImage(w, r, data, mime, version)
+}
+
+// serveImage writes image bytes with caching and a policy that stops the browser
+// from treating the response as anything other than an image.
+func serveImage(w http.ResponseWriter, r *http.Request, data []byte, mime, version string) {
 	etag := `"` + version + `"`
 	if r.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
@@ -96,7 +123,7 @@ func (s *Server) handleWAAvatar(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", mime)
 	w.Header().Set("ETag", etag)
-	// private: this is one person's own picture, never a shared cache entry.
+	// private: these are personal photographs, never a shared cache entry.
 	w.Header().Set("Cache-Control", "private, max-age=300")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -118,6 +145,9 @@ type contactRow struct {
 	ContactID string `json:"contact_id,omitempty"`
 	// FromDevice marks rows discovered from WhatsApp rather than typed manually.
 	FromDevice bool `json:"from_device"`
+	// AvatarVersion is set only for selected contacts, whose picture the
+	// connector fetches; empty means the row falls back to initials.
+	AvatarVersion string `json:"avatar_version,omitempty"`
 }
 
 // handleWAContacts merges the chats discovered on the device with the allowlist,
@@ -187,6 +217,12 @@ func (s *Server) handleWAContacts(w http.ResponseWriter, r *http.Request) {
 		}
 		return displayName(a) < displayName(b)
 	})
+
+	for phone, version := range s.wa.ContactAvatarVersions() {
+		if row, ok := byPhone[phone]; ok {
+			row.AvatarVersion = version
+		}
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"contacts": rows})
 }
