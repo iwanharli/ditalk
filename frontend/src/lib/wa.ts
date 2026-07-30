@@ -115,6 +115,11 @@ export async function deleteContact(id: string) {
   return api.delete<void>(`/wa/allowlist/${id}`)
 }
 
+/** Asks the engine to try pulling older history for this contact again. */
+export async function retryBackfill(phone: string) {
+  return api.post<{ status: string }>(`/wa/contacts/${phone}/backfill`)
+}
+
 export async function requestPairing() {
   return api.post<{ status: string }>('/wa/pair')
 }
