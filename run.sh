@@ -2,8 +2,9 @@
 #
 # Runs the ditalk backend and frontend together.
 #
-#   ./run.sh              backend + frontend
-#   ./run.sh --worker     also start the queue worker
+#   ./run.sh                 backend + frontend + WhatsApp connector
+#   ./run.sh --worker        also start the queue worker
+#   ./run.sh --no-connector  skip the WhatsApp connector
 #   ./run.sh --help
 #
 # Written for bash 3.2, the version macOS ships, so no `wait -n`,
@@ -14,11 +15,15 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
 WITH_WORKER=0
+# The connector is on by default: it is the only thing that can produce a pairing
+# QR, so without it the dashboard sits waiting for a code nothing generates.
+WITH_CONNECTOR=1
 for arg in "$@"; do
   case "$arg" in
     --worker) WITH_WORKER=1 ;;
+    --no-connector) WITH_CONNECTOR=0 ;;
     -h|--help)
-      sed -n '3,8p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '3,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -31,10 +36,10 @@ done
 # ---------------------------------------------------------------- output helpers
 
 if [ -t 1 ]; then
-  C_BE=$'\033[36m'; C_FE=$'\033[35m'; C_WK=$'\033[33m'
+  C_BE=$'\033[36m'; C_FE=$'\033[35m'; C_WK=$'\033[33m'; C_WA=$'\033[32m'
   C_WARN=$'\033[33m'; C_ERR=$'\033[31m'; C_OK=$'\033[32m'; C_OFF=$'\033[0m'
 else
-  C_BE=; C_FE=; C_WK=; C_WARN=; C_ERR=; C_OK=; C_OFF=
+  C_BE=; C_FE=; C_WK=; C_WA=; C_WARN=; C_ERR=; C_OK=; C_OFF=
 fi
 
 info()  { printf '%s\n' "$*"; }
@@ -129,9 +134,16 @@ if [ "$redis_up" -eq 0 ]; then
   warn "Redis tidak berjalan; queue tidak akan memproses job."
 fi
 
+# -sTCP:LISTEN matters: without it a browser tab still holding a client socket to
+# the dev server counts as "port in use" and blocks startup for no reason.
+listener_pids() {
+  lsof -ti:"$1" -sTCP:LISTEN 2>/dev/null
+}
+
 for p in "$PORT" "$FRONTEND_PORT"; do
-  if lsof -ti:"$p" >/dev/null 2>&1; then
-    fatal "Port $p sudah dipakai oleh PID $(lsof -ti:"$p" | tr '\n' ' ')
+  held="$(listener_pids "$p")"
+  if [ -n "$held" ]; then
+    fatal "Port $p sudah dipakai oleh PID $(echo "$held" | tr '\n' ' ')
   Hentikan proses itu, atau ubah PORT / FRONTEND_PORT."
   fi
 done
@@ -139,6 +151,17 @@ done
 if [ ! -d frontend/node_modules ]; then
   info "Memasang dependency frontend..."
   (cd frontend && npm install) || fatal "npm install gagal"
+fi
+
+if [ "$WITH_CONNECTOR" -eq 1 ]; then
+  if [ -z "${INTERNAL_TOKEN:-}" ]; then
+    warn "INTERNAL_TOKEN kosong; backend akan menolak event dari connector."
+    warn "  Buat token: openssl rand -base64 32"
+  fi
+  if [ ! -d services/wa-connector/node_modules ]; then
+    info "Memasang dependency connector..."
+    (cd services/wa-connector && npm install) || fatal "npm install connector gagal"
+  fi
 fi
 
 # ------------------------------------------------------------------------- build
@@ -218,12 +241,25 @@ if [ "$WITH_WORKER" -eq 1 ]; then
   PIDS="$PIDS $!"
 fi
 
-(cd frontend && exec npm run dev -- --port "$FRONTEND_PORT") > >(prefix "fe" "$C_FE") 2>&1 &
+if [ "$WITH_CONNECTOR" -eq 1 ]; then
+  # BACKEND_URL must match the port the API actually bound to, otherwise the
+  # connector talks to a stale server and no QR ever reaches the dashboard.
+  (cd services/wa-connector && BACKEND_URL="http://localhost:$PORT" exec npm start) \
+    > >(prefix "wa" "$C_WA") 2>&1 &
+  PIDS="$PIDS $!"
+fi
+
+# BACKEND_PORT makes the Vite proxy follow the API port rather than assume 8080.
+(cd frontend && BACKEND_PORT="$PORT" exec npm run dev -- --port "$FRONTEND_PORT") \
+  > >(prefix "fe" "$C_FE") 2>&1 &
 PIDS="$PIDS $!"
 
 printf '\n'
 ok "backend   http://localhost:$PORT"
 ok "frontend  http://localhost:$FRONTEND_PORT"
+if [ "$WITH_CONNECTOR" -eq 1 ]; then
+  ok "pairing   http://localhost:$FRONTEND_PORT/pairing"
+fi
 info "Tekan Ctrl-C untuk menghentikan semuanya."
 printf '\n'
 

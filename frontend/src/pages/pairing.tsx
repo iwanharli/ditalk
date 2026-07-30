@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Plus, ShieldCheck, Trash2, Unplug } from 'lucide-react'
+import { Loader2, PlugZap, Plus, ShieldCheck, Trash2, Unplug } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -44,6 +44,7 @@ import {
 } from '@/lib/wa'
 
 const errorMessages: Record<string, string> = {
+  connector_offline: 'Connector tidak berjalan, jadi tidak ada yang bisa membuat QR.',
   phone_required: 'Nomor wajib diisi.',
   phone_too_short: 'Nomor terlalu pendek.',
   phone_invalid_characters: 'Nomor hanya boleh berisi angka dan pemisah.',
@@ -124,8 +125,18 @@ export function PairingPage() {
               <CardTitle className="flex items-center justify-between gap-2 font-heading">
                 Status
                 {connection && (
-                  <Badge variant={statusVariant(connection.status)}>
-                    {statusLabels[connection.status]}
+                  // Matches the topbar badge: two different labels for the same
+                  // state would read as two different problems.
+                  <Badge
+                    variant={
+                      !connection.connector_online && connection.status !== 'connected'
+                        ? 'secondary'
+                        : statusVariant(connection.status)
+                    }
+                  >
+                    {!connection.connector_online && connection.status !== 'connected'
+                      ? 'Connector mati'
+                      : statusLabels[connection.status]}
                   </Badge>
                 )}
               </CardTitle>
@@ -152,13 +163,12 @@ export function PairingPage() {
                 <p className="text-sm text-muted-foreground">
                   Sudah tersambung. Tidak perlu memindai QR.
                 </p>
+              ) : connection && !connection.connector_online ? (
+                <ConnectorOffline />
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  Belum ada QR. Pastikan connector berjalan
-                  <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">
-                    npm run dev
-                  </code>
-                  di services/wa-connector, lalu minta QR baru.
+                  Menunggu QR dari connector. Kode biasanya muncul dalam beberapa
+                  detik.
                 </p>
               )}
 
@@ -169,7 +179,13 @@ export function PairingPage() {
               <div className="flex flex-wrap gap-2">
                 <Button
                   onClick={() => pair.mutate()}
-                  disabled={pair.isPending || connection?.status === 'connected'}
+                  disabled={
+                    pair.isPending ||
+                    connection?.status === 'connected' ||
+                    // Nothing would honour the request; a disabled button is
+                    // honest, a success toast would not be.
+                    connection?.connector_online === false
+                  }
                   size="sm"
                 >
                   {pair.isPending && <Loader2 className="size-4 animate-spin" />}
@@ -197,6 +213,37 @@ export function PairingPage() {
         </div>
       </PageSections>
     </PageContainer>
+  )
+}
+
+/**
+ * The QR comes from Baileys inside the connector process. When that process is
+ * not running there is nothing to wait for, so say so plainly and give the exact
+ * command rather than leaving an empty panel.
+ */
+function ConnectorOffline() {
+  return (
+    <div className="space-y-3 rounded-lg border border-dashed p-4">
+      <div className="flex items-start gap-2">
+        <PlugZap className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-500" />
+        <div className="space-y-1">
+          <p className="text-sm font-medium">Connector tidak berjalan</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            QR dibuat oleh connector, bukan oleh backend. Jalankan salah satu:
+          </p>
+        </div>
+      </div>
+      <pre className="overflow-x-auto rounded-md bg-muted px-3 py-2 text-xs">
+        <code>./run.sh</code>
+      </pre>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        <code className="rounded bg-muted px-1 py-0.5">./run.sh</code> menjalankan
+        connector sekaligus. Atau jalankan sendiri dari{' '}
+        <code className="rounded bg-muted px-1 py-0.5">services/wa-connector</code>{' '}
+        dengan <code className="rounded bg-muted px-1 py-0.5">npm run dev</code>.
+        Setelah hidup, QR muncul sendiri di sini.
+      </p>
+    </div>
   )
 }
 

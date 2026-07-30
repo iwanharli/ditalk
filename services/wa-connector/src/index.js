@@ -148,6 +148,25 @@ async function clearAuth() {
   }
 }
 
+async function handlePairRequest() {
+  logger.info('QR baru diminta dari dashboard');
+
+  if (sock) {
+    try {
+      // end() drops the socket without logging the device out, so an existing
+      // link survives if the user only wanted to refresh a stale code.
+      sock.end(undefined);
+    } catch {
+      // Already closed.
+    }
+    sock = null;
+  }
+
+  await startSocket().catch((err) =>
+    logger.error({ err: err.message }, 'gagal memulai socket untuk pairing'),
+  );
+}
+
 async function handleLogout() {
   logger.warn('logout diminta dari dashboard');
   try {
@@ -181,23 +200,42 @@ async function pollLoop() {
       }
 
       if (cmd.logout) await handleLogout();
-      if (cmd.pair && !sock) restart();
+      // Force a fresh socket even when one exists: a socket that is present but
+      // stuck disconnected would otherwise never emit a new QR.
+      if (cmd.pair) await handlePairRequest();
     }
 
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
 }
 
+/**
+ * Waits for the backend before opening the socket.
+ *
+ * The allowlist must be loaded first: check() fails closed, so starting early
+ * would silently discard a history sync we are actually allowed to read. When
+ * both processes start together the backend often is not listening yet, so this
+ * retries instead of giving up on the first attempt.
+ */
+async function loadInitialAllowlist(attempts = 20, delayMs = 1000) {
+  for (let i = 1; i <= attempts; i++) {
+    const cmd = await fetchCommands();
+    if (cmd) {
+      allowlist.replace(cmd.allowed_phones, cmd.allowlist_version);
+      logger.info({ count: allowlist.size }, 'allowlist awal dimuat');
+      return true;
+    }
+    if (i === 1) logger.info('menunggu backend siap');
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return false;
+}
+
 async function main() {
-  // The allowlist must be loaded before the socket starts, otherwise the first
-  // history sync would arrive with an empty filter. check() fails closed anyway,
-  // but this avoids discarding messages we are allowed to read.
-  const initial = await fetchCommands();
-  if (initial) {
-    allowlist.replace(initial.allowed_phones, initial.allowlist_version);
-    logger.info({ count: allowlist.size }, 'allowlist awal dimuat');
-  } else {
-    logger.warn('backend tidak dapat dihubungi; semua pesan akan dibuang sampai allowlist termuat');
+  if (!(await loadInitialAllowlist())) {
+    logger.warn(
+      'backend tidak dapat dihubungi; pesan akan dibuang sampai allowlist termuat',
+    );
   }
 
   pollLoop().catch((err) => logger.error({ err: err.message }, 'poll loop berhenti'));

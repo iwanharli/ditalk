@@ -36,16 +36,30 @@ export function ConnectionBadge() {
     )
   }
 
-  const { status } = data.connection
+  const { status, connector_online } = data.connection
+
+  // "Belum tersambung" would be misleading while the connector is down: nothing
+  // is even trying to connect.
+  const offline = !connector_online && status !== 'connected'
+  const label = offline ? 'Connector mati' : statusLabels[status]
 
   return (
     <Link
       to="/pairing"
       className="inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs transition-colors hover:bg-accent"
-      title={`${data.allowlist_active} nomor aktif dibaca`}
+      title={
+        offline
+          ? 'Connector tidak berjalan; tidak ada pesan yang dibaca'
+          : `${data.allowlist_active} nomor aktif dibaca`
+      }
     >
-      <span className={cn('size-1.5 shrink-0 rounded-full', dotClass[status])} />
-      <span className="font-medium">{statusLabels[status]}</span>
+      <span
+        className={cn(
+          'size-1.5 shrink-0 rounded-full',
+          offline ? 'bg-amber-500' : dotClass[status],
+        )}
+      />
+      <span className="font-medium">{label}</span>
       <span className="hidden text-muted-foreground sm:inline">
         · {data.allowlist_active} nomor
       </span>
