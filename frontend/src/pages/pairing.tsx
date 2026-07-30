@@ -26,6 +26,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
 import { QRCanvas } from '@/components/qr-canvas'
+import { PageContainer, PageHeader, PageSections } from '@/components/page-shell'
 import { ApiError } from '@/lib/api'
 import {
   addContact,
@@ -101,102 +102,101 @@ export function PairingPage() {
   const connection = status.data?.connection
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
-      <header>
-        <h1 className="font-heading text-2xl font-semibold">Sambungkan WhatsApp</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Tautkan akun Anda sendiri sebagai Linked Device. Aplikasi hanya membaca —
-          tidak mengirim pesan, tidak membalas otomatis.
-        </p>
-      </header>
+    <PageContainer>
+      <PageHeader
+        title="Sambungkan WhatsApp"
+        description="Tautkan akun Anda sendiri sebagai Linked Device. Aplikasi hanya membaca — tidak mengirim pesan, tidak membalas otomatis."
+      />
 
-      <Alert>
-        <ShieldCheck className="size-4" />
-        <AlertTitle>Hanya nomor yang Anda daftarkan yang dibaca</AlertTitle>
-        <AlertDescription>
-          Percakapan dari nomor di luar daftar, termasuk semua grup, dibuang sebelum
-          dianalisis. Filter berjalan di connector dan diperiksa ulang di backend.
-        </AlertDescription>
-      </Alert>
+      <PageSections>
+        <Alert>
+          <ShieldCheck className="size-4" />
+          <AlertTitle>Hanya nomor yang Anda daftarkan yang dibaca</AlertTitle>
+          <AlertDescription>
+            Percakapan dari nomor di luar daftar, termasuk semua grup, dibuang sebelum
+            dianalisis. Filter berjalan di connector dan diperiksa ulang di backend.
+          </AlertDescription>
+        </Alert>
 
-      <div className="grid gap-6 md:grid-cols-[auto_1fr]">
-        <Card className="md:w-[340px]">
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between gap-2 font-heading">
-              Status
-              {connection && (
-                <Badge variant={statusVariant(connection.status)}>
-                  {statusLabels[connection.status]}
-                </Badge>
+        <div className="grid gap-6 md:grid-cols-[auto_1fr]">
+          <Card className="md:w-[340px]">
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between gap-2 font-heading">
+                Status
+                {connection && (
+                  <Badge variant={statusVariant(connection.status)}>
+                    {statusLabels[connection.status]}
+                  </Badge>
+                )}
+              </CardTitle>
+              <CardDescription>
+                {connection?.self_phone
+                  ? `Tertaut ke +${connection.self_phone}`
+                  : 'Belum ada akun tertaut.'}
+              </CardDescription>
+            </CardHeader>
+
+            <CardContent className="space-y-4">
+              {status.isPending ? (
+                <Skeleton className="h-[264px] w-full" />
+              ) : connection?.qr ? (
+                <div className="space-y-3">
+                  <QRCanvas value={connection.qr} />
+                  <ol className="list-inside list-decimal space-y-1 text-xs text-muted-foreground">
+                    <li>Buka WhatsApp di ponsel Anda.</li>
+                    <li>Pilih Perangkat Tertaut, lalu Tautkan perangkat.</li>
+                    <li>Pindai kode ini. Kode berganti otomatis.</li>
+                  </ol>
+                </div>
+              ) : connection?.status === 'connected' ? (
+                <p className="text-sm text-muted-foreground">
+                  Sudah tersambung. Tidak perlu memindai QR.
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Belum ada QR. Pastikan connector berjalan
+                  <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">
+                    npm run dev
+                  </code>
+                  di services/wa-connector, lalu minta QR baru.
+                </p>
               )}
-            </CardTitle>
-            <CardDescription>
-              {connection?.self_phone
-                ? `Tertaut ke +${connection.self_phone}`
-                : 'Belum ada akun tertaut.'}
-            </CardDescription>
-          </CardHeader>
 
-          <CardContent className="space-y-4">
-            {status.isPending ? (
-              <Skeleton className="h-[264px] w-full" />
-            ) : connection?.qr ? (
-              <div className="space-y-3">
-                <QRCanvas value={connection.qr} />
-                <ol className="list-inside list-decimal space-y-1 text-xs text-muted-foreground">
-                  <li>Buka WhatsApp di ponsel Anda.</li>
-                  <li>Pilih Perangkat Tertaut, lalu Tautkan perangkat.</li>
-                  <li>Pindai kode ini. Kode berganti otomatis.</li>
-                </ol>
+              {connection?.last_error && (
+                <p className="text-sm text-destructive">{connection.last_error}</p>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  onClick={() => pair.mutate()}
+                  disabled={pair.isPending || connection?.status === 'connected'}
+                  size="sm"
+                >
+                  {pair.isPending && <Loader2 className="size-4 animate-spin" />}
+                  Minta QR baru
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => logout.mutate()}
+                  disabled={logout.isPending}
+                >
+                  <Unplug className="size-4" />
+                  Lepas perangkat
+                </Button>
               </div>
-            ) : connection?.status === 'connected' ? (
-              <p className="text-sm text-muted-foreground">
-                Sudah tersambung. Tidak perlu memindai QR.
-              </p>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Belum ada QR. Pastikan connector berjalan
-                <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">
-                  npm run dev
-                </code>
-                di services/wa-connector, lalu minta QR baru.
-              </p>
-            )}
+            </CardContent>
+          </Card>
 
-            {connection?.last_error && (
-              <p className="text-sm text-destructive">{connection.last_error}</p>
-            )}
-
-            <div className="flex flex-wrap gap-2">
-              <Button
-                onClick={() => pair.mutate()}
-                disabled={pair.isPending || connection?.status === 'connected'}
-                size="sm"
-              >
-                {pair.isPending && <Loader2 className="size-4 animate-spin" />}
-                Minta QR baru
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => logout.mutate()}
-                disabled={logout.isPending}
-              >
-                <Unplug className="size-4" />
-                Lepas perangkat
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <AllowlistCard
-          isPending={allowlist.isPending}
-          contacts={allowlist.data?.contacts ?? []}
-          rejections={allowlist.data?.rejections ?? []}
-          onChanged={invalidate}
-        />
-      </div>
-    </div>
+          <AllowlistCard
+            isPending={allowlist.isPending}
+            contacts={allowlist.data?.contacts ?? []}
+            rejections={allowlist.data?.rejections ?? []}
+            onChanged={invalidate}
+          />
+        </div>
+      </PageSections>
+    </PageContainer>
   )
 }
 
