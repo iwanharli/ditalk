@@ -441,6 +441,42 @@ func (s *Server) applyMessageReaction(w http.ResponseWriter, r *http.Request, us
 	writeJSON(w, http.StatusOK, map[string]string{"status": outcomeLabel(found, "reacted")})
 }
 
+type backfillRequest struct {
+	ChatJID    string `json:"chat_jid"`
+	OldestID   string `json:"oldest_id"`
+	OldestFrom bool   `json:"oldest_from_me"`
+	OldestTsMs int64  `json:"oldest_ts_ms"`
+	Count      int    `json:"count"`
+}
+
+// pendingBackfill lists conversations that should be walked further back.
+//
+// The engine drives this on its own: as long as a selected contact still yields
+// older messages, another page is requested. The user does not have to export a
+// chat by hand.
+func (s *Server) pendingBackfill(r *http.Request, userID string) []backfillRequest {
+	cursors, err := s.db.BackfillCursors(r.Context(), userID)
+	if err != nil {
+		s.log.Printf("backfill cursors: %v", err)
+		return nil
+	}
+
+	out := []backfillRequest{}
+	for _, c := range cursors {
+		if !s.wa.Backfill.ShouldRequest(c.ConversationID, c.Timestamp, c.StoredCount) {
+			continue
+		}
+		out = append(out, backfillRequest{
+			ChatJID:    waid.JIDFromPhone(c.Phone),
+			OldestID:   c.MessageID,
+			OldestFrom: c.FromMe,
+			OldestTsMs: c.Timestamp.UnixMilli(),
+			Count:      wa.BackfillBatch,
+		})
+	}
+	return out
+}
+
 // outcomeLabel distinguishes "applied" from "the message is not stored here",
 // which happens when an event arrives for a chat added to the allowlist later.
 func outcomeLabel(found bool, applied string) string {
@@ -475,5 +511,6 @@ func (s *Server) handleInternalCommands(w http.ResponseWriter, r *http.Request) 
 		"pair":              cmd.Pair,
 		"allowlist_version": cmd.AllowlistVersion,
 		"allowed_phones":    phones,
+		"backfill":          s.pendingBackfill(r, userID),
 	})
 }

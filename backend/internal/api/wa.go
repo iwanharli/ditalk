@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ditalk/backend/internal/storage"
+	"ditalk/backend/internal/wa"
 	"ditalk/backend/internal/waid"
 )
 
@@ -148,6 +149,9 @@ type contactRow struct {
 	// AvatarVersion is set only for selected contacts, whose picture the
 	// connector fetches; empty means the row falls back to initials.
 	AvatarVersion string `json:"avatar_version,omitempty"`
+	// Stored and Backfill describe how much of this chat's history is saved.
+	Stored   int          `json:"stored"`
+	Backfill *wa.Progress `json:"backfill,omitempty"`
 }
 
 // handleWAContacts merges the chats discovered on the device with the allowlist,
@@ -222,6 +226,21 @@ func (s *Server) handleWAContacts(w http.ResponseWriter, r *http.Request) {
 		if row, ok := byPhone[phone]; ok {
 			row.AvatarVersion = version
 		}
+	}
+
+	// How much history is stored, and whether the engine is still walking back.
+	if cursors, err := s.db.BackfillCursors(r.Context(), userID); err == nil {
+		for _, c := range cursors {
+			row, ok := byPhone[c.Phone]
+			if !ok {
+				continue
+			}
+			row.Stored = c.StoredCount
+			p := s.wa.Backfill.Progress(c.ConversationID, c.StoredCount)
+			row.Backfill = &p
+		}
+	} else {
+		s.log.Printf("backfill progress: %v", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"contacts": rows})
