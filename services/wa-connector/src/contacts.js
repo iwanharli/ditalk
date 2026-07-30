@@ -117,6 +117,15 @@ export class ContactDirectory {
     return this.chats.size;
   }
 
+  /** How many known names actually belong to a conversation. */
+  get nameCount() {
+    let n = 0;
+    for (const phone of this.chats.keys()) {
+      if (this.names.has(phone) || this.chats.get(phone).name) n++;
+    }
+    return n;
+  }
+
   /**
    * WhatsApp sends the full history sync only once per pairing. Without a cache
    * the picker would be empty after every restart, so the directory is persisted
@@ -125,11 +134,14 @@ export class ContactDirectory {
    * about them where analysis data lives. Logout deletes both.
    */
   toJSON() {
-    return {
-      version: 1,
-      chats: [...this.chats.values()],
-      names: [...this.names.entries()],
-    };
+    // Only names belonging to an actual conversation are written to disk. The
+    // address book is far larger than the set of people messaged, and persisting
+    // all of it would keep names of people the user has never talked to. They
+    // stay in memory for the session so a name that arrives before its chat is
+    // not lost.
+    const names = [...this.names.entries()].filter(([phone]) => this.chats.has(phone));
+
+    return { version: 1, chats: [...this.chats.values()], names };
   }
 
   loadFrom(data) {

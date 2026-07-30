@@ -29,6 +29,9 @@ const allowlist = new Allowlist();
 const directory = new ContactDirectory();
 const lidMap = new LidMap();
 let lastLidMapSize = 0;
+// Guards against repeating a full app-state resync on every reconnect.
+let namesRequested = false;
+let lastNameCount = 0;
 let sock = null;
 // The socket object exists before it finishes authenticating, so anything that
 // queries WhatsApp must wait for 'open' rather than merely for sock to be set.
@@ -145,6 +148,8 @@ async function startSocket() {
       consecutiveFailures = 0;
       logger.info('tersambung ke WhatsApp');
 
+      void ensureContactNames();
+
       const profile = await readOwnProfile(sock);
       await reportConnection({
         status: 'connected',
@@ -157,6 +162,7 @@ async function startSocket() {
 
     if (connection === 'close') {
       socketOpen = false;
+      namesRequested = false;
       const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
 
       if (statusCode === DisconnectReason.loggedOut) {
@@ -273,6 +279,37 @@ async function startSocket() {
   });
 }
 
+/**
+ * Fetches the address book so the picker can show names instead of bare numbers.
+ *
+ * Display names do not arrive with the chats. They come from the app-state
+ * collection `critical_unblock_low`, which Baileys syncs only when it also
+ * expects a history sync — that is, essentially just after pairing. On every
+ * later reconnect the step is skipped, so a picker built from message activity
+ * alone stays nameless forever.
+ *
+ * Asking for it explicitly is the same request WhatsApp Web makes, and it is
+ * read-only. It runs once per connection and only while names are missing,
+ * because a full resync is not free.
+ */
+async function ensureContactNames() {
+  if (namesRequested || directory.nameCount > 0) return;
+  namesRequested = true;
+
+  try {
+    logger.info('meminta buku alamat untuk nama kontak');
+    await sock.resyncAppState(['critical_unblock_low'], true);
+    // The resulting contacts.upsert events are buffered by Baileys and flushed
+    // after this resolves, so counting here would always report zero. The poll
+    // loop reports the real number once they land.
+    logger.info('permintaan buku alamat selesai');
+  } catch (err) {
+    // Not fatal: the picker still works with numbers.
+    namesRequested = false;
+    logger.warn({ err: err.message }, 'gagal mengambil buku alamat');
+  }
+}
+
 function restart() {
   setTimeout(() => {
     startSocket().catch((err) => logger.error({ err: err.message }, 'gagal restart'));
@@ -369,6 +406,11 @@ async function pollLoop() {
       allowlist.replace(cmd.allowed_phones, cmd.allowlist_version);
       if (allowlist.size !== before) {
         logger.info({ count: allowlist.size }, 'allowlist diperbarui');
+      }
+
+      if (directory.nameCount !== lastNameCount) {
+        lastNameCount = directory.nameCount;
+        logger.info({ named: lastNameCount, of: directory.size }, 'nama kontak diperbarui');
       }
 
       if (lidMap.size !== lastLidMapSize) {
