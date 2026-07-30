@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -54,6 +55,14 @@ func (db *DB) SaveLiveMessage(
 		return "", errors.New("message_id dan conversation_id wajib ada")
 	}
 
+	// A message that arrives with no content at all is a failed decryption:
+	// Baileys still emits it, but there is nothing to analyse. Storing it would
+	// leave a row that looks like a real message while carrying nothing, and it
+	// would also defeat content-based deduplication against an import.
+	if strings.TrimSpace(m.Text) == "" && m.MessageType == "text" {
+		return SaveSkipped, nil
+	}
+
 	phone, ok := waid.PhoneFromJID(m.ConversationID)
 	if !ok {
 		return "", fmt.Errorf("jid tidak didukung")
@@ -85,11 +94,13 @@ func (db *DB) SaveLiveMessage(
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO messages (
 		  conversation_id, wa_message_id, sender_role, timestamp,
-		  message_type, text_cipher, quoted_message_id, is_view_once, is_ephemeral
-		) VALUES ($1, $2, $3, $4, $5, $6, nullif($7,''), false, $8)
-		ON CONFLICT (conversation_id, wa_message_id) DO NOTHING`,
+		  message_type, text_cipher, quoted_message_id, is_view_once, is_ephemeral,
+		  content_hash
+		) VALUES ($1, $2, $3, $4, $5, $6, nullif($7,''), false, $8, nullif($9,''))
+		ON CONFLICT DO NOTHING`,
 		conversationID, m.MessageID, role, m.Timestamp,
 		normalizeType(m.MessageType), textCipher, m.QuotedMessageID, m.IsEphemeral,
+		ContentHash(m.Timestamp, role, m.Text),
 	)
 	if err != nil {
 		return "", fmt.Errorf("insert message: %w", err)
