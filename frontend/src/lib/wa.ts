@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { api } from '@/lib/api'
+import { api, ApiError } from '@/lib/api'
 
 export const waStatusSchema = z.enum([
   'disconnected',
@@ -115,6 +115,82 @@ export async function deleteContact(id: string) {
   return api.delete<void>(`/wa/allowlist/${id}`)
 }
 
+export const importFileSchema = z.object({
+  name: z.string(),
+  size_bytes: z.number(),
+  modified_at: z.string(),
+  is_archive: z.boolean(),
+})
+
+export const importFilesResponseSchema = z.object({
+  dir: z.string(),
+  files: z.array(importFileSchema),
+})
+
+export const importPreviewSchema = z.object({
+  date_order: z.string(),
+  total_messages: z.number(),
+  senders: z.record(z.string(), z.number()),
+  first_at: z.string().nullish(),
+  last_at: z.string().nullish(),
+  warnings: z.array(z.string()).nullish(),
+})
+
+export const importResultSchema = z.object({
+  conversation_id: z.string(),
+  inserted: z.number(),
+  skipped: z.number(),
+  sessions: z.number(),
+  date_order: z.string(),
+  warnings: z.array(z.string()).nullish(),
+})
+
+export type ImportFile = z.infer<typeof importFileSchema>
+export type ImportPreview = z.infer<typeof importPreviewSchema>
+export type ImportResult = z.infer<typeof importResultSchema>
+
+export async function getImportFiles() {
+  return importFilesResponseSchema.parse(await api.get('/imports/files'))
+}
+
+/** Either `file` (uploaded) or `fileName` (already in the import folder). */
+function importForm(input: {
+  file?: File
+  fileName?: string
+  selfName?: string
+  displayName?: string
+  chatKey?: string
+}) {
+  const fd = new FormData()
+  if (input.file) fd.append('file', input.file)
+  if (input.fileName) fd.append('file_name', input.fileName)
+  if (input.selfName) fd.append('self_name', input.selfName)
+  if (input.displayName) fd.append('display_name', input.displayName)
+  if (input.chatKey) fd.append('chat_key', input.chatKey)
+  return fd
+}
+
+export async function previewImport(input: { file?: File; fileName?: string }) {
+  const res = await fetch('/api/imports/preview', {
+    method: 'POST',
+    body: importForm(input),
+  })
+  if (!res.ok) throw new ApiError(res.status, (await res.json()).error ?? res.statusText)
+  return importPreviewSchema.parse(await res.json())
+}
+
+export async function runImport(input: {
+  file?: File
+  fileName?: string
+  selfName: string
+  displayName: string
+  chatKey: string
+}) {
+  const res = await fetch('/api/imports', { method: 'POST', body: importForm(input) })
+  if (!res.ok) throw new ApiError(res.status, (await res.json()).error ?? res.statusText)
+  return importResultSchema.parse(await res.json())
+}
+
 /** Asks the engine to try pulling older history for this contact again. */
 export async function retryBackfill(phone: string) {
   return api.post<{ status: string }>(`/wa/contacts/${phone}/backfill`)
@@ -126,6 +202,59 @@ export async function requestPairing() {
 
 export async function logoutDevice() {
   return api.delete<{ status: string }>('/wa/session')
+}
+
+export const conversationSummarySchema = z.object({
+  id: z.string(),
+  display_name: z.string(),
+  phone: z.string().optional().default(''),
+  last_message_text: z.string().optional().default(''),
+  last_message_at: z.string().nullish(),
+  last_sender_role: z.string().optional().default(''),
+  last_message_type: z.string().optional().default(''),
+  message_count: z.number(),
+})
+
+export const conversationsResponseSchema = z.object({
+  conversations: z.array(conversationSummarySchema),
+})
+
+export const conversationMessageSchema = z.object({
+  id: z.string(),
+  wa_message_id: z.string(),
+  sender_role: z.enum(['SELF', 'OTHER']),
+  timestamp: z.string(),
+  message_type: z.string(),
+  text: z.string().optional().default(''),
+  quoted_message_id: z.string().optional().default(''),
+  reactions: z.array(z.unknown()).default([]),
+  is_view_once: z.boolean(),
+  is_ephemeral: z.boolean(),
+  is_deleted: z.boolean(),
+  edited_at: z.string().nullish(),
+})
+
+export const conversationMessagesResponseSchema = z.object({
+  messages: z.array(conversationMessageSchema),
+})
+
+export type ConversationSummary = z.infer<typeof conversationSummarySchema>
+export type ConversationMessage = z.infer<typeof conversationMessageSchema>
+
+export async function getConversations() {
+  return conversationsResponseSchema.parse(await api.get('/conversations'))
+}
+
+export async function getConversationMessages(conversationID: string) {
+  return conversationMessagesResponseSchema.parse(
+    await api.get(`/conversations/${conversationID}/messages`),
+  )
+}
+
+export async function sendConversationMessage(conversationID: string, text: string) {
+  return conversationMessageSchema.parse(
+    await api.post(`/conversations/${conversationID}/messages`, { text }),
+  )
 }
 
 /** Human-readable labels for the reasons the filter rejected traffic. */

@@ -2,10 +2,14 @@ import { createBrowserRouter } from 'react-router-dom'
 import { AppLayout } from '@/components/app-layout'
 import { Placeholder } from '@/components/placeholder'
 import { PairingPage } from '@/pages/pairing'
+import { ImportPage } from '@/pages/import'
+import { ChatPage } from '@/pages/chat'
 import { navItems } from '@/lib/nav'
 
 const pages: Record<string, React.ReactNode> = {
   '/pairing': <PairingPage />,
+  '/import': <ImportPage />,
+  '/chat': <ChatPage />,
 }
 
 export const router = createBrowserRouter([

@@ -19,6 +19,11 @@ type Config struct {
 	OpenAIAPIKey string
 	AIMediaURL   string
 
+	// Folder the dashboard offers exports from. A WhatsApp export with media is
+	// hundreds of megabytes, so picking a file already on this machine avoids
+	// copying the whole archive through the browser.
+	ImportDir string
+
 	// Model routing per doc bab 23A. Tier 1 handles bulk volume, tier 3 only
 	// escalations, so the expensive model never sees every message.
 	ModelTier1             string
@@ -52,6 +57,7 @@ func Load() Config {
 
 		OpenAIAPIKey: os.Getenv("OPENAI_API_KEY"),
 		AIMediaURL:   getEnv("AI_MEDIA_URL", "http://127.0.0.1:8000"),
+		ImportDir:    getEnv("IMPORT_DIR", "./data-chat"),
 
 		ModelTier1:             getEnv("MODEL_TIER1", "gpt-5.6-luna"),
 		ModelTier2:             getEnv("MODEL_TIER2", "gpt-5.6-terra"),

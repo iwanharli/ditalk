@@ -1,7 +1,9 @@
 package api
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -111,15 +113,15 @@ func (s *Server) parseUpload(r *http.Request) (*waimport.Result, uploadMeta, err
 		return nil, meta, fmt.Errorf("invalid_multipart_form")
 	}
 
-	file, header, err := r.FormFile("file")
+	// Two ways in: a file uploaded from the browser, or the name of one already
+	// sitting in the import folder. The second exists because an export with
+	// media is hundreds of megabytes, and copying that through HTTP achieves
+	// nothing when the file is already on this machine.
+	source, err := s.openImportSource(r)
 	if err != nil {
-		return nil, meta, fmt.Errorf("file_required")
+		return nil, meta, err
 	}
-	defer file.Close()
-
-	if ext := strings.ToLower(filepath.Ext(header.Filename)); ext != ".txt" {
-		return nil, meta, fmt.Errorf("only_txt_export_supported")
-	}
+	defer source.Close()
 
 	meta.selfName = strings.TrimSpace(r.FormValue("self_name"))
 	meta.displayName = strings.TrimSpace(r.FormValue("display_name"))
@@ -130,13 +132,46 @@ func (s *Server) parseUpload(r *http.Request) (*waimport.Result, uploadMeta, err
 	if meta.chatKey == "" {
 		meta.chatKey = meta.displayName
 	}
-	if meta.chatKey == "" {
-		meta.chatKey = header.Filename
-	}
 
-	res, err := waimport.Parse(file, meta.selfName)
+	res, err := waimport.Parse(source, meta.selfName)
 	if err != nil {
 		return nil, meta, fmt.Errorf("parse_failed")
 	}
 	return res, meta, nil
+}
+
+// openImportSource resolves the transcript to read, from an upload or from the
+// import folder, unwrapping a zip in either case.
+func (s *Server) openImportSource(r *http.Request) (io.ReadCloser, error) {
+	if name := strings.TrimSpace(r.FormValue("file_name")); name != "" {
+		rc, err := s.openImportFile(name)
+		if err != nil {
+			s.log.Printf("open import file: %v", err)
+			return nil, fmt.Errorf("import_file_unreadable")
+		}
+		return rc, nil
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		return nil, fmt.Errorf("file_required")
+	}
+
+	switch strings.ToLower(filepath.Ext(header.Filename)) {
+	case ".txt":
+		return file, nil
+	case ".zip":
+		rc, err := waimport.OpenChatText(file, header.Size)
+		if err != nil {
+			file.Close()
+			if errors.Is(err, waimport.ErrNoChatText) {
+				return nil, fmt.Errorf("zip_without_chat_text")
+			}
+			return nil, fmt.Errorf("zip_unreadable")
+		}
+		return &archiveReader{inner: rc, file: nil, upload: file}, nil
+	default:
+		file.Close()
+		return nil, fmt.Errorf("only_txt_or_zip_supported")
+	}
 }

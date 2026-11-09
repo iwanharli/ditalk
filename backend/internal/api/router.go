@@ -76,11 +76,14 @@ func (s *Server) Routes() http.Handler {
 
 	// Import Export Chat is the first ingestion path: no unofficial API, and the
 	// dataset stays under the user's control (doc bab 30, Keputusan 1).
+	mux.HandleFunc("GET /imports/files", s.handleImportFiles)
 	mux.HandleFunc("POST /imports/preview", s.handleImportPreview)
 	mux.HandleFunc("POST /imports", s.handleImport)
 
+	mux.HandleFunc("GET /conversations", s.handleConversationsList)
 	mux.HandleFunc("POST /conversations/sync", notImplemented)
-	mux.HandleFunc("GET /conversations/{id}/messages", notImplemented)
+	mux.HandleFunc("GET /conversations/{id}/messages", s.handleConversationMessages)
+	mux.HandleFunc("POST /conversations/{id}/messages", s.handleConversationSend)
 	mux.HandleFunc("DELETE /conversations/{id}", notImplemented)
 
 	mux.HandleFunc("POST /analysis/run", notImplemented)

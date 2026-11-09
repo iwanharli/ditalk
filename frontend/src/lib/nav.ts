@@ -1,8 +1,10 @@
 import {
   FileText,
+  FileUp,
   HeartHandshake,
   LayoutDashboard,
   Library,
+  MessageCircle,
   MessagesSquare,
   Mic,
   QrCode,
@@ -45,6 +47,13 @@ export const navGroups: NavGroup[] = [
         label: 'Percakapan',
         description: 'Timeline pesan dengan label emosi dan bukti pendukung.',
         icon: MessagesSquare,
+      },
+      {
+        path: '/chat',
+        label: 'Chat',
+        title: 'Chat',
+        description: 'Mockup ruang baca percakapan dengan konteks analisis.',
+        icon: MessageCircle,
       },
       {
         path: '/trends',
@@ -94,6 +103,13 @@ export const navGroups: NavGroup[] = [
         description:
           'Tautkan akun Anda sendiri dan tentukan nomor mana yang boleh dibaca.',
         icon: QrCode,
+      },
+      {
+        path: '/import',
+        label: 'Impor Chat',
+        description:
+          'Masukkan riwayat percakapan dari fitur Export Chat WhatsApp.',
+        icon: FileUp,
       },
       {
         path: '/reports',

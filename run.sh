@@ -242,6 +242,10 @@ on_signal() {
 trap on_signal INT TERM
 trap shutdown EXIT
 
+# The backend runs from the project root, so a relative IMPORT_DIR would not
+# point at backend/data-chat. Resolve it here unless the user set one.
+export IMPORT_DIR="${IMPORT_DIR:-$ROOT/backend/data-chat}"
+
 PORT="$PORT" backend/bin/api > >(prefix "be" "$C_BE") 2>&1 &
 PIDS="$PIDS $!"
 
